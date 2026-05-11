@@ -1,0 +1,277 @@
+import type { Player, GameState, GameAction, Card } from 'shared';
+import { Deck } from './Deck';
+import { calculateHandValue } from './BlackjackUtils';
+
+export class BlackjackGame {
+  players: Player[];
+  deck: Deck;
+  dealerHand: Card[];
+  minBet: number;
+  currentPlayerIndex: number;
+  phase: 'betting' | 'playing' | 'dealer-turn' | 'showdown' | 'finished';
+  bets: Map<string, number>;
+  results: Map<string, { result: 'win' | 'lose' | 'push' | 'blackjack'; amount: number }>;
+
+  constructor(players: Player[], deck: Deck, minBet: number) {
+    this.players = players;
+    this.deck = deck;
+    this.dealerHand = [];
+    this.minBet = minBet;
+    this.currentPlayerIndex = 0;
+    this.phase = 'betting';
+    this.bets = new Map();
+    this.results = new Map();
+  }
+
+  start(): GameState {
+    this.phase = 'betting';
+    this.players.forEach((p) => {
+      p.hand = [];
+      p.currentBet = 0;
+      p.isFolded = false;
+      p.isAllIn = false;
+    });
+
+    return this.getState();
+  }
+
+  handleAction(
+    playerId: string,
+    action: GameAction
+  ): { success: boolean; error?: string; newState: GameState; gameEnded?: boolean } {
+    const playerIndex = this.players.findIndex((p) => p.id === playerId);
+    if (playerIndex === -1) {
+      return { success: false, error: 'Player not found', newState: this.getState() };
+    }
+
+    if (this.phase === 'betting') {
+      if (action.type === 'bet') {
+        const amount = action.amount || this.minBet;
+        const player = this.players[playerIndex];
+
+        if (player.balance < amount) {
+          return { success: false, error: 'Insufficient balance', newState: this.getState() };
+        }
+
+        if (amount < this.minBet) {
+          return {
+            success: false,
+            error: 'Bet must be at least minimum',
+            newState: this.getState(),
+          };
+        }
+
+        player.currentBet = amount;
+        player.balance -= amount;
+        this.bets.set(playerId, amount);
+
+        const allBetted = this.players.every((p) => p.currentBet > 0);
+        if (allBetted) {
+          this.phase = 'playing';
+          this.dealInitialCards();
+          this.currentPlayerIndex = 0;
+        }
+
+        return { success: true, newState: this.getState() };
+      }
+
+      return {
+        success: false,
+        error: 'Only betting is allowed in betting phase',
+        newState: this.getState(),
+      };
+    }
+
+    if (this.phase === 'playing') {
+      if (playerIndex !== this.currentPlayerIndex) {
+        return { success: false, error: 'Not your turn', newState: this.getState() };
+      }
+
+      const player = this.players[playerIndex];
+
+      if (action.type === 'hit') {
+        const card = this.deck.deal();
+        if (card) {
+          player.hand.push(card);
+        }
+
+        const value = calculateHandValue(player.hand);
+        if (value > 21) {
+          player.isFolded = true;
+          this.nextPlayer();
+        } else if (value === 21) {
+          this.nextPlayer();
+        }
+
+        return { success: true, newState: this.getState() };
+      }
+
+      if (action.type === 'stand') {
+        this.nextPlayer();
+        return { success: true, newState: this.getState() };
+      }
+
+      if (action.type === 'double') {
+        const bet = this.bets.get(playerId) || this.minBet;
+        if (player.balance < bet) {
+          return {
+            success: false,
+            error: 'Insufficient balance for double',
+            newState: this.getState(),
+          };
+        }
+
+        player.balance -= bet;
+        player.currentBet += bet;
+        this.bets.set(playerId, player.currentBet);
+
+        const card = this.deck.deal();
+        if (card) {
+          player.hand.push(card);
+        }
+
+        const value = calculateHandValue(player.hand);
+        if (value > 21) {
+          player.isFolded = true;
+        }
+
+        this.nextPlayer();
+        return { success: true, newState: this.getState() };
+      }
+
+      return {
+        success: false,
+        error: 'Invalid action for playing phase',
+        newState: this.getState(),
+      };
+    }
+
+    return { success: false, error: 'Game not in playable state', newState: this.getState() };
+  }
+
+  private dealInitialCards(): void {
+    for (let i = 0; i < 2; i++) {
+      for (const player of this.players) {
+        const card = this.deck.deal();
+        if (card) {
+          player.hand.push(card);
+        }
+      }
+    }
+
+    for (let i = 0; i < 2; i++) {
+      const card = this.deck.deal();
+      if (card) {
+        this.dealerHand.push(card);
+      }
+    }
+
+    for (const player of this.players) {
+      if (calculateHandValue(player.hand) === 21) {
+        const bet = this.bets.get(player.id) || this.minBet;
+        player.balance += bet * 2.5;
+        this.results.set(player.id, { result: 'blackjack', amount: bet * 1.5 });
+      }
+    }
+
+    this.players = this.players.filter((p) => !this.results.has(p.id));
+    if (this.players.length === 0) {
+      this.phase = 'finished';
+    }
+  }
+
+  private nextPlayer(): void {
+    this.currentPlayerIndex++;
+
+    while (
+      this.currentPlayerIndex < this.players.length &&
+      this.players[this.currentPlayerIndex].isFolded
+    ) {
+      this.currentPlayerIndex++;
+    }
+
+    if (this.currentPlayerIndex >= this.players.length) {
+      this.playDealer();
+    }
+  }
+
+  private playDealer(): void {
+    this.phase = 'dealer-turn';
+
+    while (calculateHandValue(this.dealerHand) < 17) {
+      const card = this.deck.deal();
+      if (card) {
+        this.dealerHand.push(card);
+      }
+    }
+
+    this.resolveResults();
+  }
+
+  private resolveResults(): void {
+    this.phase = 'showdown';
+    const dealerValue = calculateHandValue(this.dealerHand);
+
+    for (const player of this.players) {
+      if (player.isFolded) continue;
+
+      const playerValue = calculateHandValue(player.hand);
+      const bet = this.bets.get(player.id) || this.minBet;
+
+      if (dealerValue > 21) {
+        player.balance += bet * 2;
+        this.results.set(player.id, { result: 'win', amount: bet });
+      } else if (playerValue > dealerValue) {
+        player.balance += bet * 2;
+        this.results.set(player.id, { result: 'win', amount: bet });
+      } else if (playerValue < dealerValue) {
+        this.results.set(player.id, { result: 'lose', amount: -bet });
+      } else {
+        player.balance += bet;
+        this.results.set(player.id, { result: 'push', amount: 0 });
+      }
+    }
+
+    this.phase = 'finished';
+  }
+
+  getState(): GameState {
+    return {
+      phase: this.phase,
+      currentPlayerIndex: this.currentPlayerIndex,
+      dealerHand:
+        this.phase === 'betting' || this.phase === 'playing' ? [] : this.dealerHand.slice(0, 1),
+      dealerHiddenCard: this.phase === 'betting' || this.phase === 'playing',
+      pot: Array.from(this.bets.values()).reduce((a, b) => a + b, 0),
+      minBet: this.minBet,
+      currentBet: this.minBet,
+    };
+  }
+
+  getPlayerResult(playerId: string): {
+    result: 'win' | 'lose' | 'push' | 'blackjack';
+    amount: number;
+  } {
+    return this.results.get(playerId) || { result: 'lose', amount: 0 };
+  }
+
+  getValidActions(playerId: string): import('shared').GameActionType[] {
+    const playerIndex = this.players.findIndex((p) => p.id === playerId);
+    if (playerIndex === -1) return [];
+
+    if (this.phase === 'betting') {
+      return ['bet'];
+    }
+
+    if (this.phase === 'playing' && playerIndex === this.currentPlayerIndex) {
+      const actions: import('shared').GameActionType[] = ['hit', 'stand'];
+      const player = this.players[playerIndex];
+      if (player.hand.length === 2 && player.balance >= (this.bets.get(playerId) || this.minBet)) {
+        actions.push('double');
+      }
+      return actions;
+    }
+
+    return [];
+  }
+}
