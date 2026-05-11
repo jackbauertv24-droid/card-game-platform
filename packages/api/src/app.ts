@@ -15,7 +15,7 @@ export function createApp() {
 
   app.use(
     cors({
-      origin: ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://10.4.0.9:5173'],
+      origin: true,
       credentials: true,
     })
   );
@@ -51,8 +51,10 @@ export function startServer(app: express.Application) {
   const httpServer = createServer(app);
   setupSocket(httpServer);
 
-  httpServer.listen(config.port, () => {
-    console.log(`Server running on http://localhost:${config.port}`);
+  httpServer.listen(config.port, '0.0.0.0', () => {
+    console.log(`Server running on http://0.0.0.0:${config.port}`);
+    console.log(`Local: http://localhost:${config.port}`);
+    console.log(`Network: http://10.4.0.9:${config.port}`);
     console.log(`Health check: http://localhost:${config.port}/health`);
     console.log(`Socket.io ready for connections`);
   });

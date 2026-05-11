@@ -1,4 +1,4 @@
-import type { Player, Card, GameState, GameAction, GameResult, GameType } from 'shared';
+import type { Player, GameState, GameAction, GameResult, GameType } from 'shared';
 import { Deck } from './Deck';
 import { BlackjackGame } from './BlackjackGame';
 
@@ -32,6 +32,7 @@ export class GameEngine {
     this.gameState = {
       phase: 'waiting',
       currentPlayerIndex: 0,
+      players: this.players,
       dealerHand: [],
       dealerHiddenCard: true,
       pot: 0,

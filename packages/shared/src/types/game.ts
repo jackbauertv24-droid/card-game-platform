@@ -23,6 +23,7 @@ export interface Player {
 export interface GameState {
   phase: 'waiting' | 'betting' | 'playing' | 'dealer-turn' | 'showdown' | 'finished';
   currentPlayerIndex: number;
+  players: Player[];
   dealerHand: Card[];
   dealerHiddenCard: boolean;
   pot: number;

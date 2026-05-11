@@ -18,13 +18,16 @@ export function handleRoomEvents(
   });
 
   socket.on('room:create', (data, callback) => {
+    console.log(`[room:create] Received from ${user.username}:`, JSON.stringify(data));
     try {
       const existingRoom = roomManager.getPlayersRoom(user.id);
       if (existingRoom) {
+        console.log(`[room:create] User ${user.username} already in room ${existingRoom.id}`);
         callback({ success: false, message: 'You are already in a room' });
         return;
       }
 
+      console.log(`[room:create] Creating room for ${user.username}...`);
       const room = roomManager.createRoom(
         user.id,
         data.name,
@@ -32,12 +35,17 @@ export function handleRoomEvents(
         data.maxPlayers,
         data.minBet
       );
+      console.log(`[room:create] Room created: ${room.id}`);
 
       socket.join(room.id);
+      console.log(`[room:create] Socket joined room ${room.id}`);
+
       io.emit('room:list', { rooms: roomManager.getAllRooms() });
 
+      console.log(`[room:create] Sending callback success`);
       callback({ success: true, room: { ...room, playerCount: room.players.length } });
     } catch (err) {
+      console.error(`[room:create] Error:`, err);
       callback({ success: false, message: 'Failed to create room' });
     }
   });

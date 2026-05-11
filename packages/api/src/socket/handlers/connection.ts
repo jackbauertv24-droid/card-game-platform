@@ -9,9 +9,11 @@ export function handleConnection(
   roomManager: RoomManager
 ) {
   const user = socket.data.user;
-  console.log(`User connected: ${user.username} (${socket.id})`);
+  console.log(`[socket] User connected: ${user.username} (${socket.id})`);
+  console.log(`[socket] Socket connected: ${socket.connected}`);
 
   socket.emit('auth:success', { user, token: socket.handshake.auth.token });
+  console.log(`[socket] Sent auth:success to ${user.username}`);
 
   const existingRoom = roomManager.getPlayersRoom(user.id);
   if (existingRoom) {

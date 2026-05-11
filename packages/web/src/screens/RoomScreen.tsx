@@ -64,13 +64,26 @@ export default function RoomScreen() {
 
   const handleStartGame = () => {
     const skt = socket.getSocket();
-    if (skt) {
-      skt.emit('game:start', {}, (response) => {
-        if (!response.success) {
-          alert(response.message || 'Failed to start game');
-        }
-      });
+    console.log('[handleStartGame] Socket:', skt);
+    console.log('[handleStartGame] Socket connected:', skt?.connected);
+
+    if (!skt) {
+      alert('Socket not initialized. Please refresh.');
+      return;
     }
+
+    if (!skt.connected) {
+      alert('Socket disconnected. Please refresh.');
+      return;
+    }
+
+    console.log('[handleStartGame] Emitting game:start');
+    skt.emit('game:start', {}, (response) => {
+      console.log('[handleStartGame] Response:', response);
+      if (!response.success) {
+        alert(response.message || 'Failed to start game');
+      }
+    });
   };
 
   if (loading) {

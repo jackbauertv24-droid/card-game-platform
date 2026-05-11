@@ -193,13 +193,28 @@ function CreateRoomModal({
 
     const skt = socket.getSocket();
     if (!skt) {
-      setError('Not connected');
+      setError('Not connected to server. Please refresh the page.');
       setIsLoading(false);
       return;
     }
 
-    skt.emit('room:create', { name, gameType, maxPlayers, minBet }, (response) => {
+    if (!skt.connected) {
+      setError('Socket not connected. Please wait or refresh.');
       setIsLoading(false);
+      return;
+    }
+
+    console.log('Creating room:', { name, gameType, maxPlayers, minBet });
+
+    const timeout = setTimeout(() => {
+      setIsLoading(false);
+      setError('Request timed out. Please try again.');
+    }, 10000);
+
+    skt.emit('room:create', { name, gameType, maxPlayers, minBet }, (response) => {
+      clearTimeout(timeout);
+      setIsLoading(false);
+      console.log('Room create response:', response);
       if (response.success && response.room) {
         onCreate(response.room as RoomDetail);
       } else {

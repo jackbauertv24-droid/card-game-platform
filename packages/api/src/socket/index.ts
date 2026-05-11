@@ -14,7 +14,7 @@ export type GameSocketServer = Server<ClientToServerEvents, ServerToClientEvents
 export function setupSocket(httpServer: HttpServer): GameSocketServer {
   const io: GameSocketServer = new Server(httpServer, {
     cors: {
-      origin: ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://10.4.0.9:5173'],
+      origin: '*',
       methods: ['GET', 'POST'],
       credentials: true,
     },

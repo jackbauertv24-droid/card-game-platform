@@ -10,7 +10,13 @@ class SocketClient {
 
   connect(token: string): Promise<User> {
     return new Promise((resolve, reject) => {
-      this.socket = io('http://localhost:4000', {
+      // Use relative URL to go through Vite proxy
+      const socketUrl = window.location.origin;
+
+      console.log('Connecting to socket:', socketUrl);
+
+      this.socket = io(socketUrl, {
+        path: '/socket.io',
         auth: { token },
         transports: ['websocket', 'polling'],
       });

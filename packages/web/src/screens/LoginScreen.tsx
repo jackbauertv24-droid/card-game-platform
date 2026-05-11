@@ -1,15 +1,39 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 
 export default function LoginScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const { login, isLoading, error } = useAuthStore();
   const navigate = useNavigate();
 
+  useEffect(() => {
+    const savedUsername = localStorage.getItem('savedUsername');
+    const savedPassword = localStorage.getItem('savedPassword');
+    const savedRememberMe = localStorage.getItem('rememberMe') === 'true';
+
+    if (savedRememberMe && savedUsername && savedPassword) {
+      setUsername(savedUsername);
+      setPassword(savedPassword);
+      setRememberMe(true);
+    }
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (rememberMe) {
+      localStorage.setItem('savedUsername', username);
+      localStorage.setItem('savedPassword', password);
+      localStorage.setItem('rememberMe', 'true');
+    } else {
+      localStorage.removeItem('savedUsername');
+      localStorage.removeItem('savedPassword');
+      localStorage.setItem('rememberMe', 'false');
+    }
+
     const success = await login(username, password);
     if (success) {
       navigate('/lobby');
@@ -31,6 +55,7 @@ export default function LoginScreen() {
               className="input-field"
               placeholder="Enter username"
               required
+              autoComplete="username"
             />
           </div>
 
@@ -43,7 +68,21 @@ export default function LoginScreen() {
               className="input-field"
               placeholder="Enter password"
               required
+              autoComplete="current-password"
             />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="rememberMe"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-gold focus:ring-gold"
+            />
+            <label htmlFor="rememberMe" className="text-gray-300 text-sm">
+              Remember me (save credentials locally)
+            </label>
           </div>
 
           {error && <p className="text-red-500 text-sm">{error}</p>}

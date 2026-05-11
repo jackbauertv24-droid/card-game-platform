@@ -4,6 +4,7 @@ import { calculateHandValue } from './BlackjackUtils';
 
 export class BlackjackGame {
   players: Player[];
+  originalPlayers: Player[];
   deck: Deck;
   dealerHand: Card[];
   minBet: number;
@@ -13,7 +14,8 @@ export class BlackjackGame {
   results: Map<string, { result: 'win' | 'lose' | 'push' | 'blackjack'; amount: number }>;
 
   constructor(players: Player[], deck: Deck, minBet: number) {
-    this.players = players;
+    this.players = players.map((p) => ({ ...p, hand: [], currentBet: 0, isFolded: false }));
+    this.originalPlayers = this.players.map((p) => ({ ...p }));
     this.deck = deck;
     this.dealerHand = [];
     this.minBet = minBet;
@@ -29,8 +31,11 @@ export class BlackjackGame {
       p.hand = [];
       p.currentBet = 0;
       p.isFolded = false;
-      p.isAllIn = false;
     });
+    this.dealerHand = [];
+    this.bets.clear();
+    this.results.clear();
+    this.currentPlayerIndex = 0;
 
     return this.getState();
   }
@@ -70,6 +75,17 @@ export class BlackjackGame {
           this.phase = 'playing';
           this.dealInitialCards();
           this.currentPlayerIndex = 0;
+
+          while (
+            this.currentPlayerIndex < this.players.length &&
+            this.players[this.currentPlayerIndex].isFolded
+          ) {
+            this.currentPlayerIndex++;
+          }
+
+          if (this.currentPlayerIndex >= this.players.length) {
+            this.playDealer();
+          }
         }
 
         return { success: true, newState: this.getState() };
@@ -98,6 +114,8 @@ export class BlackjackGame {
         const value = calculateHandValue(player.hand);
         if (value > 21) {
           player.isFolded = true;
+          const bet = this.bets.get(playerId) || this.minBet;
+          this.results.set(playerId, { result: 'lose', amount: -bet });
           this.nextPlayer();
         } else if (value === 21) {
           this.nextPlayer();
@@ -133,6 +151,8 @@ export class BlackjackGame {
         const value = calculateHandValue(player.hand);
         if (value > 21) {
           player.isFolded = true;
+          const totalBet = this.bets.get(playerId) || this.minBet;
+          this.results.set(playerId, { result: 'lose', amount: -totalBet });
         }
 
         this.nextPlayer();
@@ -171,11 +191,11 @@ export class BlackjackGame {
         const bet = this.bets.get(player.id) || this.minBet;
         player.balance += bet * 2.5;
         this.results.set(player.id, { result: 'blackjack', amount: bet * 1.5 });
+        player.isFolded = true;
       }
     }
 
-    this.players = this.players.filter((p) => !this.results.has(p.id));
-    if (this.players.length === 0) {
+    if (this.players.every((p) => p.isFolded)) {
       this.phase = 'finished';
     }
   }
@@ -213,7 +233,7 @@ export class BlackjackGame {
     const dealerValue = calculateHandValue(this.dealerHand);
 
     for (const player of this.players) {
-      if (player.isFolded) continue;
+      if (this.results.has(player.id)) continue;
 
       const playerValue = calculateHandValue(player.hand);
       const bet = this.bets.get(player.id) || this.minBet;
@@ -236,12 +256,15 @@ export class BlackjackGame {
   }
 
   getState(): GameState {
+    const showDealerCards =
+      this.phase === 'dealer-turn' || this.phase === 'showdown' || this.phase === 'finished';
+
     return {
       phase: this.phase,
       currentPlayerIndex: this.currentPlayerIndex,
-      dealerHand:
-        this.phase === 'betting' || this.phase === 'playing' ? [] : this.dealerHand.slice(0, 1),
-      dealerHiddenCard: this.phase === 'betting' || this.phase === 'playing',
+      players: this.players,
+      dealerHand: showDealerCards ? this.dealerHand : this.dealerHand.slice(0, 1),
+      dealerHiddenCard: !showDealerCards,
       pot: Array.from(this.bets.values()).reduce((a, b) => a + b, 0),
       minBet: this.minBet,
       currentBet: this.minBet,

@@ -16,7 +16,7 @@ export default function GameScreen() {
 
   const gameState = gameStore.gameState;
   const room = gameStore.currentRoom;
-  const myPlayer = gameStore.players.find((p) => p.id === user?.id);
+  const myPlayer = gameState?.players?.find((p) => p.id === user?.id);
 
   useEffect(() => {
     if (!gameState && room) {
