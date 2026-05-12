@@ -49,7 +49,12 @@ export interface ClientToServerEvents {
   ) => void;
   'room:create': (
     data: { name: string; gameType: GameType; maxPlayers: number; minBet: number },
-    callback: (response: { success: boolean; room?: RoomDetail; message?: string }) => void
+    callback: (response: {
+      success: boolean;
+      room?: RoomDetail;
+      gameState?: GameState;
+      message?: string;
+    }) => void
   ) => void;
   'room:join': (
     data: { roomId: string; asObserver?: boolean },

@@ -226,9 +226,15 @@ export default function LobbyScreen() {
           gameType={gameType}
           onClose={() => setShowCreateModal(false)}
           socket={socket}
-          onCreate={(room) => {
+          onCreate={(room, gameState) => {
             setShowCreateModal(false);
             gameStore.setCurrentRoom(room);
+            if (gameState) {
+              gameStore.setGameState(gameState);
+              gameStore.setIsObserver(false);
+            } else {
+              gameStore.setIsObserver(!room.players.some((p) => p.id === user?.id));
+            }
             navigate(`/room/${room.id}`);
           }}
         />
@@ -246,7 +252,7 @@ function CreateRoomModal({
   gameType: GameType;
   onClose: () => void;
   socket: ReturnType<typeof useSocket>;
-  onCreate: (room: RoomDetail) => void;
+  onCreate: (room: RoomDetail, gameState?: import('shared').GameState) => void;
 }) {
   const [name, setName] = useState(`My ${gameType} Room`);
   const [minBet, setMinBet] = useState(100);
@@ -283,7 +289,7 @@ function CreateRoomModal({
       setIsLoading(false);
       console.log('Room create response:', response);
       if (response.success && response.room) {
-        onCreate(response.room as RoomDetail);
+        onCreate(response.room as RoomDetail, response.gameState);
       } else {
         setError(response.message || 'Failed to create room');
       }

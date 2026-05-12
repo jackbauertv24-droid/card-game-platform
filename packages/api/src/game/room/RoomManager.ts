@@ -33,13 +33,25 @@ export class RoomManager {
       'INSERT INTO rooms (id, name, game_type, created_by, min_bet, max_players, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(id, name, gameType, userId, minBet, maxPlayers, 'waiting', now);
 
-    db.prepare('INSERT INTO room_observers (room_id, user_id, joined_at) VALUES (?, ?, ?)').run(
-      id,
-      userId,
-      now
-    );
+    db.prepare(
+      'INSERT INTO room_players (room_id, user_id, seat_index, is_ready, is_player, status, joined_at) VALUES (?, ?, ?, 1, 1, ?, ?)'
+    ).run(id, userId, 0, 'connected', now);
 
-    const emptySeats = Array.from({ length: maxPlayers }, (_, i) => i);
+    const emptySeats = Array.from({ length: maxPlayers }, (_, i) => i).filter((i) => i !== 0);
+
+    const player: SeatedPlayer = {
+      id: user.id,
+      username: user.username,
+      balance: user.balance,
+      seatIndex: 0,
+      isReady: true,
+      isFolded: false,
+      isAllIn: false,
+      currentBet: 0,
+      hand: [],
+      status: 'connected',
+      joinedAt: now,
+    };
 
     const room: InMemoryRoom = {
       id,
@@ -50,16 +62,10 @@ export class RoomManager {
       maxPlayers,
       status: 'waiting',
       createdAt: now,
-      playerCount: 0,
-      observerCount: 1,
-      players: [],
-      observers: [
-        {
-          id: user.id,
-          username: user.username,
-          joinedAt: now,
-        },
-      ],
+      playerCount: 1,
+      observerCount: 0,
+      players: [player],
+      observers: [],
       emptySeats,
     };
 

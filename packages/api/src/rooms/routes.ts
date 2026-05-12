@@ -4,6 +4,7 @@ import db from '../db';
 import { createRoomSchema } from 'shared';
 import { v4 as uuidv4 } from 'uuid';
 import { roomManager } from '../game/room';
+import { GameEngine } from '../game/engine/GameEngine';
 
 const router = Router();
 
@@ -64,66 +65,53 @@ router.post('/', authMiddleware, (req: Request, res: Response) => {
     return res.status(400).json({ error: parsed.error.errors[0]?.message || 'Invalid input' });
   }
 
-  const existingRoom = db
-    .prepare(
-      `SELECT r.id FROM rooms r
-       JOIN room_players rp ON r.id = rp.room_id
-       WHERE rp.user_id = ? AND r.status IN ('waiting', 'playing')`
-    )
-    .get(req.user!.id) as { id: string } | undefined;
-
-  const existingObserver = db
-    .prepare(
-      `SELECT r.id FROM rooms r
-       JOIN room_observers ro ON r.id = ro.room_id
-       WHERE ro.user_id = ? AND r.status IN ('waiting', 'playing')`
-    )
-    .get(req.user!.id) as { id: string } | undefined;
-
-  if (existingRoom || existingObserver) {
+  const existingRoom = roomManager.getUserRoom(req.user!.id);
+  if (existingRoom) {
     return res.status(400).json({ error: 'You are already in a room' });
   }
 
-  const id = uuidv4();
-  const now = new Date().toISOString();
+  try {
+    const room = roomManager.createRoom(
+      req.user!.id,
+      parsed.data.name,
+      parsed.data.gameType,
+      parsed.data.maxPlayers,
+      parsed.data.minBet
+    );
 
-  db.prepare(
-    'INSERT INTO rooms (id, name, game_type, created_by, min_bet, max_players, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(
-    id,
-    parsed.data.name,
-    parsed.data.gameType,
-    req.user!.id,
-    parsed.data.minBet,
-    parsed.data.maxPlayers,
-    'waiting',
-    now
-  );
+    if (room.players.length === 1) {
+      const gameId = uuidv4();
+      const game = new GameEngine(gameId, room.id, room.gameType, room.minBet, room.players);
+      const initialState = game.start();
+      initialState.gameId = gameId;
+      initialState.turnStartedAt = new Date().toISOString();
 
-  db.prepare('INSERT INTO room_observers (room_id, user_id, joined_at) VALUES (?, ?, ?)').run(
-    id,
-    req.user!.id,
-    now
-  );
+      db.prepare(
+        `INSERT INTO games (id, room_id, game_type, state, deck, current_player_index, turn_started_at, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        gameId,
+        room.id,
+        room.gameType,
+        JSON.stringify(initialState),
+        JSON.stringify(game.getDeck()),
+        initialState.currentPlayerIndex,
+        initialState.turnStartedAt,
+        new Date().toISOString()
+      );
 
-  const room: import('shared').RoomDetail = {
-    id,
-    name: parsed.data.name,
-    gameType: parsed.data.gameType,
-    createdBy: req.user!.id,
-    minBet: parsed.data.minBet,
-    maxPlayers: parsed.data.maxPlayers,
-    status: 'waiting',
-    createdAt: now,
-    playerCount: 0,
-    observerCount: 1,
-    players: [],
-    observers: [{ id: req.user!.id, username: req.user!.username, joinedAt: now }],
-    emptySeats: Array.from({ length: parsed.data.maxPlayers }, (_, i) => i),
-  };
+      db.prepare('UPDATE rooms SET status = ? WHERE id = ?').run('playing', room.id);
+      roomManager.updateRoomStatus(room.id, 'playing');
+      roomManager.invalidateCache(room.id);
 
-  res.status(201).json({ room, asObserver: true });
-  roomManager.invalidateCache(id);
+      res.status(201).json({ room, gameState: initialState, asObserver: false });
+    } else {
+      res.status(201).json({ room, asObserver: false });
+    }
+  } catch (err) {
+    console.error('Room creation error:', err);
+    res.status(500).json({ error: 'Failed to create room' });
+  }
 });
 
 router.get('/:id', authMiddleware, (req: Request, res: Response) => {

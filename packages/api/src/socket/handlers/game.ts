@@ -292,6 +292,12 @@ export function handleGameEvents(
         return;
       }
 
+      const allReady = activePlayers.every((p) => p.isReady);
+      if (!allReady && activePlayers.length > 1) {
+        callback({ success: false, message: 'All players must be ready to start' });
+        return;
+      }
+
       const existingGame = loadGameState(room.id);
       if (existingGame) {
         const game = new GameEngine(
