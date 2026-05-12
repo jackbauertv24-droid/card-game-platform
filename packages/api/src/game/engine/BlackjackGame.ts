@@ -88,7 +88,7 @@ export class BlackjackGame {
           }
         }
 
-        return { success: true, newState: this.getState() };
+        return { success: true, newState: this.getState(), gameEnded: this.checkGameEnded() };
       }
 
       return {
@@ -121,12 +121,12 @@ export class BlackjackGame {
           this.nextPlayer();
         }
 
-        return { success: true, newState: this.getState() };
+        return { success: true, newState: this.getState(), gameEnded: this.checkGameEnded() };
       }
 
       if (action.type === 'stand') {
         this.nextPlayer();
-        return { success: true, newState: this.getState() };
+        return { success: true, newState: this.getState(), gameEnded: this.checkGameEnded() };
       }
 
       if (action.type === 'double') {
@@ -156,7 +156,7 @@ export class BlackjackGame {
         }
 
         this.nextPlayer();
-        return { success: true, newState: this.getState() };
+        return { success: true, newState: this.getState(), gameEnded: this.checkGameEnded() };
       }
 
       return {
@@ -167,6 +167,10 @@ export class BlackjackGame {
     }
 
     return { success: false, error: 'Game not in playable state', newState: this.getState() };
+  }
+
+  private checkGameEnded(): boolean {
+    return this.phase === 'finished';
   }
 
   private dealInitialCards(): void {

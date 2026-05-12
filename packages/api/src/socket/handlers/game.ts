@@ -96,6 +96,8 @@ export function handleGameEvents(
         )
       );
       console.log(`[game:action] Dealer hand:`, JSON.stringify(result.newState.dealerHand));
+      console.log(`[game:action] Game ended:`, result.newState.phase === 'finished');
+      console.log(`[game:action] Events:`, result.events ? 'present' : 'none');
 
       io.to(room.id).emit('game:state', { gameState: result.newState });
 
@@ -120,6 +122,7 @@ export function handleGameEvents(
         for (const event of result.events) {
           if (event.type === 'game:end') {
             const gameResults = event.data as import('shared').GameResult[];
+            console.log('[game:action] GAME END - Results:', JSON.stringify(gameResults));
 
             for (const gr of gameResults) {
               const player = room.players.find((p) => p.id === gr.playerId);

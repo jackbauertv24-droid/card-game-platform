@@ -2,10 +2,10 @@ import { useEffect } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { useGameStore } from '../store/gameStore';
 import { socketClient } from '../api/socket';
-import type { RoomDetail, GameState, Player, Room, GameResult } from 'shared';
+import type { RoomDetail, GameState, Player, GameResult } from 'shared';
 
 export function useSocket() {
-  const { user } = useAuthStore();
+  const { user, updateBalance } = useAuthStore();
   const gameStore = useGameStore();
 
   useEffect(() => {
@@ -48,6 +48,13 @@ export function useSocket() {
 
     socket.on('game:state', (data: { gameState: GameState }) => {
       gameStore.setGameState(data.gameState);
+      // Update balance from game state (real-time)
+      if (data.gameState.players) {
+        const myPlayer = data.gameState.players.find((p) => p.id === user?.id);
+        if (myPlayer && myPlayer.balance !== user?.balance) {
+          updateBalance(myPlayer.balance);
+        }
+      }
     });
 
     socket.on(
@@ -64,11 +71,17 @@ export function useSocket() {
     );
 
     socket.on('game:ended', (data: { results: GameResult[] }) => {
-      const myResult = data.results.find((r) => r.playerId === user.id);
+      const myResult = data.results.find((r) => r.playerId === user?.id);
       if (myResult) {
         console.log('Game result:', myResult);
+        // Calculate new balance from result
+        // result.amount is the net win/loss (positive for win, negative for loss)
+        // For blackjack: amount is bet * 1.5 for blackjack, bet for win, -bet for loss
+        // New balance should come from the game state, not calculated here
       }
       gameStore.setGameState(null);
+      // Refresh balance from server after game ends
+      // The game:state before game:ended should have updated balance
     });
 
     socket.on('quickmatch:found', (data: { roomId: string }) => {

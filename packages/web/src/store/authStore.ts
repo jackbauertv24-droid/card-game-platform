@@ -10,6 +10,7 @@ interface AuthState {
   register: (username: string, password: string, inviteCode: string) => Promise<boolean>;
   logout: () => void;
   checkAuth: () => Promise<void>;
+  updateBalance: (newBalance: number) => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -62,5 +63,14 @@ export const useAuthStore = create<AuthState>((set) => ({
       api.setToken(null);
       set({ user: null });
     }
+  },
+
+  updateBalance: (newBalance: number) => {
+    set((state) => {
+      if (state.user) {
+        return { user: { ...state.user, balance: newBalance } };
+      }
+      return state;
+    });
   },
 }));
