@@ -15,14 +15,15 @@ export default function GameScreen() {
   const [betAmount, setBetAmount] = useState(100);
 
   const gameState = gameStore.gameState;
+  const gameResults = gameStore.gameResults;
   const room = gameStore.currentRoom;
   const myPlayer = gameState?.players?.find((p) => p.id === user?.id);
 
   useEffect(() => {
-    if (!gameState && room) {
+    if (!gameState && !gameResults && room) {
       navigate(`/room/${roomId}`);
     }
-  }, [gameState, room, roomId, navigate]);
+  }, [gameState, gameResults, room, roomId, navigate]);
 
   const handleLeave = () => {
     const skt = socket.getSocket();
@@ -30,9 +31,16 @@ export default function GameScreen() {
       skt.emit('room:leave', {}, () => {
         gameStore.setCurrentRoom(null);
         gameStore.setGameState(null);
+        gameStore.setGameResults(null);
         navigate('/lobby');
       });
     }
+  };
+
+  const handleBackToRoom = () => {
+    gameStore.setGameState(null);
+    gameStore.setGameResults(null);
+    navigate(`/room/${roomId}`);
   };
 
   const handleAction = (actionType: GameActionType, amount?: number) => {
@@ -49,6 +57,58 @@ export default function GameScreen() {
   const handleBet = () => {
     handleAction('bet', betAmount);
   };
+
+  if (!gameState && !gameResults) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 flex items-center justify-center">
+        <div className="text-white text-xl">Loading game...</div>
+      </div>
+    );
+  }
+
+  if (gameResults && !gameState) {
+    const myResult = gameResults.find((r) => r.playerId === user?.id);
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 flex items-center justify-center">
+        <div className="bg-gray-800 rounded-xl p-8 border border-gray-700 max-w-md text-center">
+          <h2 className="text-2xl font-bold text-gold mb-6">Game Over</h2>
+          <div className="space-y-4 mb-8">
+            {gameResults.map((result) => (
+              <div key={result.playerId} className="bg-gray-700 rounded-lg p-4">
+                <p className="text-white font-semibold">
+                  {room?.players.find((p) => p.id === result.playerId)?.username || 'Unknown'}
+                </p>
+                <p
+                  className={`text-xl font-bold ${result.amount > 0 ? 'text-green-400' : result.amount < 0 ? 'text-red-400' : 'text-gray-400'}`}
+                >
+                  {result.result.toUpperCase()}
+                  {result.amount > 0 && ` +${result.amount}`}
+                  {result.amount < 0 && ` ${result.amount}`}
+                  {result.amount === 0 && ' (Push)'}
+                </p>
+              </div>
+            ))}
+          </div>
+          {myResult && user ? (
+            <p className="text-gray-300 mb-4">
+              Your balance:{' '}
+              <span className="text-gold font-bold">
+                {(user.balance + myResult.amount).toLocaleString()}
+              </span>
+            </p>
+          ) : null}
+          <div className="flex gap-4 justify-center">
+            <button onClick={handleBackToRoom} className="btn-primary">
+              Play Again
+            </button>
+            <button onClick={handleLeave} className="btn-secondary">
+              Leave Room
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!gameState || !myPlayer) {
     return (

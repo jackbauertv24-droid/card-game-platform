@@ -83,12 +83,12 @@ export function useSocket() {
     });
 
     socket.on('game:ended', (data: { results: GameResult[] }) => {
-      gameStore.setGameState(null);
       gameStore.setIsMyTurn(false);
       gameStore.setValidActions([]);
+      gameStore.setGameResults(data.results);
       const myResult = data.results.find((r) => r.playerId === user?.id);
-      if (myResult) {
-        console.log('Game result:', myResult);
+      if (myResult && myResult.amount > 0) {
+        updateBalance(user.balance + myResult.amount);
       }
     });
 
