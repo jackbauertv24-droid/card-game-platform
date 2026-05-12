@@ -3,10 +3,11 @@ import type { Socket } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from 'shared';
 import type { RoomManager, InMemoryRoom } from '../../game/room/RoomManager';
 import type { QuickMatch } from '../../game/matching/QuickMatch';
+import db from '../../db';
 
 function loadGameState(roomId: string): { state: import('shared').GameState } | null {
-  const row = globalThis.db
-    ?.prepare(
+  const row = db
+    .prepare(
       `SELECT state FROM games WHERE room_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`
     )
     .get(roomId) as { state: string } | undefined;

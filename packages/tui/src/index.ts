@@ -1,6 +1,14 @@
 import { createHttpClient } from './api/http';
 import { socketClient } from './api/socket';
-import type { User, Room, RoomDetail, GameState, GameType, GameAction } from 'shared';
+import type {
+  User,
+  RoomPreview,
+  RoomDetail,
+  GameState,
+  GameType,
+  GameAction,
+  TurnInfo,
+} from 'shared';
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -17,6 +25,9 @@ export interface CLIState {
   room: RoomDetail | null;
   roomId: string | null;
   gameState: GameState | null;
+  isObserver: boolean;
+  turnInfo: TurnInfo | null;
+  timerSeconds: number;
 }
 
 function loadState(): CLIState {
@@ -26,6 +37,7 @@ function loadState(): CLIState {
   let room: RoomDetail | null = null;
   let roomId: string | null = null;
   let gameState: GameState | null = null;
+  let isObserver = false;
 
   if (existsSync(STATE_FILE)) {
     try {
@@ -33,6 +45,7 @@ function loadState(): CLIState {
       room = data.room;
       roomId = data.roomId || data.room?.id;
       gameState = data.gameState;
+      isObserver = data.isObserver ?? false;
     } catch {
       // ignore
     }
@@ -44,6 +57,9 @@ function loadState(): CLIState {
     room,
     roomId,
     gameState,
+    isObserver,
+    turnInfo: null,
+    timerSeconds: 30,
   };
 }
 
@@ -55,6 +71,7 @@ function saveState(): void {
       room: state.room,
       roomId,
       gameState: state.gameState,
+      isObserver: state.isObserver,
     })
   );
   state.roomId = roomId;
@@ -72,7 +89,7 @@ async function ensureConnected(): Promise<void> {
       const roomIdToJoin = state.roomId || state.room?.id;
       if (roomIdToJoin) {
         try {
-          await joinRoomInternal(roomIdToJoin);
+          await joinRoomInternal(roomIdToJoin, state.isObserver);
         } catch {
           state.room = null;
           state.roomId = null;
@@ -114,17 +131,21 @@ export function logout(): void {
   state.room = null;
   state.roomId = null;
   state.gameState = null;
+  state.isObserver = false;
   http.clearToken();
   if (existsSync(STATE_FILE)) {
     unlinkSync(STATE_FILE);
   }
 }
 
-export async function getRooms(gameType?: GameType): Promise<Room[]> {
+export async function getRooms(
+  gameType?: GameType,
+  includePlaying?: boolean
+): Promise<RoomPreview[]> {
   await ensureConnected();
   return new Promise((resolve) => {
     socketClient.setOnRoomList((rooms) => resolve(rooms));
-    socketClient.getRooms(gameType);
+    socketClient.getRooms(gameType, includePlaying);
   });
 }
 
@@ -136,8 +157,9 @@ export async function createRoom(
 ): Promise<RoomDetail> {
   await ensureConnected();
   return new Promise((resolve, reject) => {
-    socketClient.setOnRoomJoined((room) => {
+    socketClient.setOnRoomJoined((room, asObserver) => {
       state.room = room;
+      state.isObserver = asObserver;
       saveState();
       resolve(room);
     });
@@ -146,28 +168,62 @@ export async function createRoom(
   });
 }
 
-export async function joinRoom(roomId: string): Promise<RoomDetail> {
-  await ensureConnected();
-  return joinRoomInternal(roomId);
-}
-
-async function joinRoomInternal(roomId: string): Promise<RoomDetail> {
+async function joinRoomInternal(roomId: string, asObserver?: boolean): Promise<RoomDetail> {
   return new Promise((resolve, reject) => {
-    socketClient.setOnRoomJoined((room) => {
+    socketClient.setOnRoomJoined((room, wasObserver) => {
       state.room = room;
-      state.roomId = room.id;
+      state.isObserver = wasObserver;
       saveState();
       resolve(room);
     });
     socketClient.setOnError((msg) => reject(new Error(msg)));
-    socketClient.joinRoom(roomId);
+    socketClient.joinRoom(roomId, asObserver);
+  });
+}
+
+export async function joinRoom(roomId: string, asObserver?: boolean): Promise<RoomDetail> {
+  await ensureConnected();
+  return joinRoomInternal(roomId, asObserver);
+}
+
+export async function sitDown(seatIndex: number): Promise<void> {
+  await ensureConnected();
+  return new Promise((resolve, reject) => {
+    socketClient.setOnPlayerSeated(() => {
+      state.isObserver = false;
+      if (state.room) {
+        const me = state.room.players.find((p) => p.id === state.user?.id);
+        if (me) {
+          me.seatIndex = seatIndex;
+        }
+      }
+      saveState();
+      resolve();
+    });
+    socketClient.setOnError((msg) => reject(new Error(msg)));
+    socketClient.sitDown(seatIndex);
+  });
+}
+
+export async function standUp(): Promise<void> {
+  await ensureConnected();
+  return new Promise((resolve, reject) => {
+    socketClient.setOnPlayerUnseated(() => {
+      state.isObserver = true;
+      saveState();
+      resolve();
+    });
+    socketClient.setOnError((msg) => reject(new Error(msg)));
+    socketClient.standUp();
   });
 }
 
 export function leaveRoom(): void {
   socketClient.leaveRoom();
   state.room = null;
+  state.roomId = null;
   state.gameState = null;
+  state.isObserver = false;
   saveState();
 }
 
@@ -224,6 +280,10 @@ export function waitForGameEnd(): Promise<{
   });
 }
 
+export function setOnTimerUpdate(callback: (seconds: number) => void): void {
+  socketClient.setOnTimerUpdate(callback);
+}
+
 export function getMe(): User | null {
   return state.user;
 }
@@ -240,22 +300,8 @@ export function isConnected(): boolean {
   return socketClient.isConnected();
 }
 
-export function setOnGameState(callback: (gs: GameState) => void): void {
-  socketClient.setOnGameState(callback);
-}
-
-export function setOnGameEnded(
-  callback: (results: { playerId: string; result: string; amount: number }[]) => void
-): void {
-  socketClient.setOnGameEnded(callback);
-}
-
-export function setOnRoomJoined(callback: (room: RoomDetail) => void): void {
-  socketClient.setOnRoomJoined(callback);
-}
-
-export function setOnError(callback: (msg: string) => void): void {
-  socketClient.setOnError(callback);
+export function isObserver(): boolean {
+  return state.isObserver;
 }
 
 async function runCLI() {
@@ -268,22 +314,25 @@ async function runCLI() {
     console.log('Commands:');
     console.log('  login <username> <password>');
     console.log('  register <username> <password> <inviteCode>');
-    console.log('  rooms [gameType]');
+    console.log('  rooms [gameType] [--playing]');
     console.log('  create-room <name> <gameType> [maxPlayers] [minBet]');
-    console.log('  join-room <roomId>');
+    console.log('  join-room <roomId> [--observer]');
+    console.log('  sit-down <seatIndex>');
+    console.log('  stand-up');
     console.log('  leave-room');
     console.log('  start-game');
     console.log('  action <type> [amount]');
     console.log('  wait-state');
     console.log('  wait-end');
+    console.log('  timer');
     console.log('  status');
     console.log('  logout');
     console.log('');
     console.log('Game Actions: bet, hit, stand, double, fold');
     console.log('Game Types: blackjack, poker');
     console.log('');
-    console.log('Token is persisted in /tmp/cardgame-cli-token.json');
-    console.log('Login once, then run other commands.');
+    console.log('Observer mode: join as observer to watch games');
+    console.log('Sit down: choose a seat to become a player');
     process.exit(0);
   }
 
@@ -316,7 +365,8 @@ async function runCLI() {
 
       case 'rooms': {
         const gameType = args[1] as GameType | undefined;
-        const rooms = await getRooms(gameType);
+        const includePlaying = args.includes('--playing');
+        const rooms = await getRooms(gameType, includePlaying);
         console.log(JSON.stringify({ rooms }, null, 2));
         break;
       }
@@ -337,12 +387,31 @@ async function runCLI() {
 
       case 'join-room': {
         const roomId = args[1];
+        const asObserver = args.includes('--observer');
         if (!roomId) {
-          console.error('Usage: join-room <roomId>');
+          console.error('Usage: join-room <roomId> [--observer]');
           process.exit(1);
         }
-        const room = await joinRoom(roomId);
-        console.log(JSON.stringify({ success: true, room }, null, 2));
+        const room = await joinRoom(roomId, asObserver);
+        console.log(JSON.stringify({ success: true, room, asObserver }, null, 2));
+        break;
+      }
+
+      case 'sit-down': {
+        const seatIndex = parseInt(args[1]);
+        if (seatIndex === undefined || seatIndex < 0) {
+          console.error('Usage: sit-down <seatIndex>');
+          console.error('Seat index must be 0-4');
+          process.exit(1);
+        }
+        await sitDown(seatIndex);
+        console.log(JSON.stringify({ success: true, seatIndex }, null, 2));
+        break;
+      }
+
+      case 'stand-up': {
+        await standUp();
+        console.log(JSON.stringify({ success: true }));
         break;
       }
 
@@ -383,6 +452,11 @@ async function runCLI() {
         break;
       }
 
+      case 'timer': {
+        console.log(JSON.stringify({ remainingSeconds: state.timerSeconds }, null, 2));
+        break;
+      }
+
       case 'status': {
         console.log(
           JSON.stringify(
@@ -390,7 +464,10 @@ async function runCLI() {
               connected: isConnected(),
               user: state.user,
               room: state.room,
+              isObserver: state.isObserver,
               gameState: state.gameState,
+              turnInfo: state.turnInfo,
+              timerSeconds: state.timerSeconds,
             },
             null,
             2

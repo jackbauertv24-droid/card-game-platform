@@ -3,13 +3,15 @@ import type {
   ServerToClientEvents,
   ClientToServerEvents,
   User,
-  Room,
+  RoomPreview,
   RoomDetail,
   GameState,
   GameResult,
   GameType,
   GameAction,
-  GameActionType,
+  TurnInfo,
+  Observer,
+  SeatedPlayer,
 } from 'shared';
 
 type GameSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -21,12 +23,17 @@ class SocketClient {
 
   private onAuthSuccess: ((user: User) => void) | null = null;
   private onError: ((msg: string) => void) | null = null;
-  private onRoomList: ((rooms: Room[]) => void) | null = null;
-  private onRoomJoined: ((room: RoomDetail) => void) | null = null;
+  private onRoomList: ((rooms: RoomPreview[]) => void) | null = null;
+  private onRoomJoined: ((room: RoomDetail, asObserver: boolean) => void) | null = null;
   private onGameStarted: ((state: GameState) => void) | null = null;
   private onGameState: ((state: GameState) => void) | null = null;
   private onGameEnded: ((results: GameResult[]) => void) | null = null;
-  private onTurn: ((playerId: string, actions: GameActionType[]) => void) | null = null;
+  private onTurn: ((turnInfo: TurnInfo) => void) | null = null;
+  private onTimerUpdate: ((remainingSeconds: number) => void) | null = null;
+  private onObserverJoined: ((observer: Observer) => void) | null = null;
+  private onObserverLeft: ((userId: string) => void) | null = null;
+  private onPlayerSeated: ((player: SeatedPlayer, seatIndex: number) => void) | null = null;
+  private onPlayerUnseated: ((playerId: string, seatIndex: number) => void) | null = null;
 
   connect(url: string, token: string): Promise<User> {
     return new Promise((resolve, reject) => {
@@ -55,7 +62,7 @@ class SocketClient {
       });
 
       this.socket.on('room:joined', (data) => {
-        if (this.onRoomJoined) this.onRoomJoined(data.room);
+        if (this.onRoomJoined) this.onRoomJoined(data.room, data.asObserver);
       });
 
       this.socket.on('game:started', (data) => {
@@ -71,7 +78,27 @@ class SocketClient {
       });
 
       this.socket.on('game:turn', (data) => {
-        if (this.onTurn) this.onTurn(data.playerId, data.validActions);
+        if (this.onTurn) this.onTurn(data);
+      });
+
+      this.socket.on('game:timer_update', (data) => {
+        if (this.onTimerUpdate) this.onTimerUpdate(data.remainingSeconds);
+      });
+
+      this.socket.on('room:observer_joined', (data) => {
+        if (this.onObserverJoined) this.onObserverJoined(data.observer);
+      });
+
+      this.socket.on('room:observer_left', (data) => {
+        if (this.onObserverLeft) this.onObserverLeft(data.userId);
+      });
+
+      this.socket.on('room:player_seated', (data) => {
+        if (this.onPlayerSeated) this.onPlayerSeated(data.player, data.seatIndex);
+      });
+
+      this.socket.on('room:player_unseated', (data) => {
+        if (this.onPlayerUnseated) this.onPlayerUnseated(data.playerId, data.seatIndex);
       });
 
       this.socket.on('disconnect', () => {
@@ -98,10 +125,10 @@ class SocketClient {
   setOnError(cb: (msg: string) => void) {
     this.onError = cb;
   }
-  setOnRoomList(cb: (rooms: Room[]) => void) {
+  setOnRoomList(cb: (rooms: RoomPreview[]) => void) {
     this.onRoomList = cb;
   }
-  setOnRoomJoined(cb: (room: RoomDetail) => void) {
+  setOnRoomJoined(cb: (room: RoomDetail, asObserver: boolean) => void) {
     this.onRoomJoined = cb;
   }
   setOnGameStarted(cb: (state: GameState) => void) {
@@ -113,13 +140,28 @@ class SocketClient {
   setOnGameEnded(cb: (results: GameResult[]) => void) {
     this.onGameEnded = cb;
   }
-  setOnTurn(cb: (playerId: string, actions: GameActionType[]) => void) {
+  setOnTurn(cb: (turnInfo: TurnInfo) => void) {
     this.onTurn = cb;
   }
+  setOnTimerUpdate(cb: (remainingSeconds: number) => void) {
+    this.onTimerUpdate = cb;
+  }
+  setOnObserverJoined(cb: (observer: Observer) => void) {
+    this.onObserverJoined = cb;
+  }
+  setOnObserverLeft(cb: (userId: string) => void) {
+    this.onObserverLeft = cb;
+  }
+  setOnPlayerSeated(cb: (player: SeatedPlayer, seatIndex: number) => void) {
+    this.onPlayerSeated = cb;
+  }
+  setOnPlayerUnseated(cb: (playerId: string, seatIndex: number) => void) {
+    this.onPlayerUnseated = cb;
+  }
 
-  getRooms(gameType?: GameType) {
+  getRooms(gameType?: GameType, includePlaying?: boolean) {
     if (this.socket) {
-      this.socket.emit('room:list', { gameType }, (res) => {
+      this.socket.emit('room:list', { gameType, includePlaying }, (res) => {
         if (this.onRoomList) this.onRoomList(res.rooms);
       });
     }
@@ -129,7 +171,7 @@ class SocketClient {
     if (this.socket) {
       this.socket.emit('room:create', { name, gameType, maxPlayers, minBet }, (res) => {
         if (res.success && res.room && this.onRoomJoined) {
-          this.onRoomJoined(res.room as RoomDetail);
+          this.onRoomJoined(res.room, false);
         } else if (this.onError) {
           this.onError(res.message || 'Failed to create room');
         }
@@ -137,13 +179,33 @@ class SocketClient {
     }
   }
 
-  joinRoom(roomId: string) {
+  joinRoom(roomId: string, asObserver?: boolean) {
     if (this.socket) {
-      this.socket.emit('room:join', { roomId }, (res) => {
+      this.socket.emit('room:join', { roomId, asObserver }, (res) => {
         if (res.success && res.room && this.onRoomJoined) {
-          this.onRoomJoined(res.room);
+          this.onRoomJoined(res.room, asObserver ?? false);
         } else if (this.onError) {
           this.onError(res.message || 'Failed to join room');
+        }
+      });
+    }
+  }
+
+  sitDown(seatIndex: number) {
+    if (this.socket) {
+      this.socket.emit('room:sit-down', { seatIndex }, (res) => {
+        if (!res.success && this.onError) {
+          this.onError(res.message || 'Failed to sit down');
+        }
+      });
+    }
+  }
+
+  standUp() {
+    if (this.socket) {
+      this.socket.emit('room:stand-up', {}, (res) => {
+        if (!res.success && this.onError) {
+          this.onError('Failed to stand up');
         }
       });
     }

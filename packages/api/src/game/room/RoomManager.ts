@@ -33,6 +33,12 @@ export class RoomManager {
       'INSERT INTO rooms (id, name, game_type, created_by, min_bet, max_players, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(id, name, gameType, userId, minBet, maxPlayers, 'waiting', now);
 
+    db.prepare('INSERT INTO room_observers (room_id, user_id, joined_at) VALUES (?, ?, ?)').run(
+      id,
+      userId,
+      now
+    );
+
     const emptySeats = Array.from({ length: maxPlayers }, (_, i) => i);
 
     const room: InMemoryRoom = {
@@ -45,9 +51,15 @@ export class RoomManager {
       status: 'waiting',
       createdAt: now,
       playerCount: 0,
-      observerCount: 0,
+      observerCount: 1,
       players: [],
-      observers: [],
+      observers: [
+        {
+          id: user.id,
+          username: user.username,
+          joinedAt: now,
+        },
+      ],
       emptySeats,
     };
 
