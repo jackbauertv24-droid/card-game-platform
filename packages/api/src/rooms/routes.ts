@@ -3,6 +3,7 @@ import { authMiddleware } from '../auth/middleware';
 import db from '../db';
 import { createRoomSchema } from 'shared';
 import { v4 as uuidv4 } from 'uuid';
+import { roomManager } from '../game/room';
 
 const router = Router();
 
@@ -122,6 +123,7 @@ router.post('/', authMiddleware, (req: Request, res: Response) => {
   };
 
   res.status(201).json({ room, asObserver: true });
+  roomManager.invalidateCache(id);
 });
 
 router.get('/:id', authMiddleware, (req: Request, res: Response) => {
@@ -349,6 +351,7 @@ router.post('/:id/join', authMiddleware, (req: Request, res: Response) => {
   }
 
   res.json({ room, gameState, asObserver: shouldBeObserver });
+  roomManager.invalidateCache(dbRoom.id);
 });
 
 router.post('/:id/sit-down', authMiddleware, (req: Request, res: Response) => {
@@ -479,6 +482,7 @@ router.post('/:id/sit-down', authMiddleware, (req: Request, res: Response) => {
     seatIndex,
     room,
   });
+  roomManager.invalidateCache(dbRoom.id);
 });
 
 router.post('/:id/stand-up', authMiddleware, (req: Request, res: Response) => {
@@ -583,6 +587,7 @@ router.post('/:id/stand-up', authMiddleware, (req: Request, res: Response) => {
       emptySeats,
     },
   });
+  roomManager.invalidateCache(dbRoom.id);
 });
 
 router.post('/:id/leave', authMiddleware, (req: Request, res: Response) => {
@@ -640,6 +645,13 @@ router.post('/:id/leave', authMiddleware, (req: Request, res: Response) => {
     .get(dbRoom.id) as { count: number };
 
   if (remainingPlayers.count === 0 && remainingObservers.count === 0) {
+    const gameIds = db.prepare('SELECT id FROM games WHERE room_id = ?').all(dbRoom.id) as {
+      id: string;
+    }[];
+    for (const g of gameIds) {
+      db.prepare('DELETE FROM transactions WHERE game_id = ?').run(g.id);
+    }
+    db.prepare('DELETE FROM games WHERE room_id = ?').run(dbRoom.id);
     db.prepare('DELETE FROM rooms WHERE id = ?').run(dbRoom.id);
   } else if (dbRoom.created_by === req.user!.id && remainingPlayers.count > 0) {
     const newOwner = db
@@ -651,6 +663,7 @@ router.post('/:id/leave', authMiddleware, (req: Request, res: Response) => {
   }
 
   res.json({ success: true });
+  roomManager.invalidateCache(dbRoom.id);
 });
 
 export default router;

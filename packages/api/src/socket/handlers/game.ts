@@ -6,6 +6,7 @@ import type {
   GameState,
   GameActionType,
   TurnInfo,
+  GameResult,
 } from 'shared';
 import { TURN_TIMEOUT_SECONDS } from 'shared';
 import type { RoomManager, InMemoryRoom } from '../../game/room/RoomManager';
@@ -199,39 +200,40 @@ function handleGameEnd(
 ) {
   console.log(`[game] Game ended in room ${roomId}`);
 
-  if (game.handleAction) {
-    const dummyResult = game.handleAction(gameState.players[0]?.id || '', { type: 'stand' });
-    if (dummyResult.events) {
-      for (const event of dummyResult.events) {
-        if (event.type === 'game:end') {
-          const gameResults = event.data as import('shared').GameResult[];
-          io.to(roomId).emit('game:ended', { results: gameResults });
+  const results: GameResult[] = [];
+  for (const player of gameState.players) {
+    const playerResult = game.game?.getPlayerResult?.(player.id) || {
+      result: 'lose' as const,
+      amount: -player.currentBet,
+    };
+    results.push({
+      playerId: player.id,
+      result: playerResult.result,
+      amount: playerResult.amount,
+    });
 
-          for (const gr of gameResults) {
-            const player = room.players.find((p) => p.id === gr.playerId);
-            if (player) {
-              const newBalance = player.balance + gr.amount;
-              player.balance = newBalance;
-              db.prepare('UPDATE users SET balance = ? WHERE id = ?').run(newBalance, gr.playerId);
+    const roomPlayer = room.players.find((p) => p.id === player.id);
+    if (roomPlayer) {
+      const newBalance = player.balance;
+      roomPlayer.balance = newBalance;
+      db.prepare('UPDATE users SET balance = ? WHERE id = ?').run(newBalance, player.id);
 
-              db.prepare(
-                `INSERT INTO transactions (id, user_id, amount, type, game_id, balance_after, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`
-              ).run(
-                uuidv4(),
-                gr.playerId,
-                gr.amount,
-                gr.result,
-                gameId,
-                newBalance,
-                new Date().toISOString()
-              );
-            }
-          }
-        }
-      }
+      db.prepare(
+        `INSERT INTO transactions (id, user_id, amount, type, game_id, balance_after, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        uuidv4(),
+        player.id,
+        playerResult.amount,
+        playerResult.result,
+        gameId,
+        newBalance,
+        new Date().toISOString()
+      );
     }
   }
+
+  io.to(roomId).emit('game:ended', { results });
 
   db.prepare('UPDATE games SET ended_at = ? WHERE id = ?').run(new Date().toISOString(), gameId);
   roomManager.updateRoomStatus(roomId, 'waiting');
@@ -257,6 +259,9 @@ export function handleGameEvents(
         callback({ success: false, message: 'You are not in a room' });
         return;
       }
+
+      socket.join(room.id);
+      console.log(`[game:start] Socket joined room ${room.id}`);
 
       if (room.createdBy !== user.id) {
         callback({ success: false, message: 'Only the room owner can start the game' });

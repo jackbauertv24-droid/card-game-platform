@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useGameStore } from '../store/gameStore';
 import { useAuthStore } from '../store/authStore';
@@ -184,11 +184,11 @@ export default function GameScreen() {
           </div>
         </div>
 
-        {gameStore.players.length > 1 && (
+        {(gameStore.gameState?.players || []).length > 1 && (
           <div className="mt-8 bg-gray-800 rounded-xl p-6 border border-gray-700">
             <h3 className="text-lg font-semibold text-white mb-4">Other Players</h3>
             <div className="flex gap-4 justify-center flex-wrap">
-              {gameStore.players
+              {(gameStore.gameState?.players || [])
                 .filter((p) => p.id !== user?.id)
                 .map((player) => (
                   <div key={player.id} className="bg-gray-700 rounded-lg p-4 text-center">

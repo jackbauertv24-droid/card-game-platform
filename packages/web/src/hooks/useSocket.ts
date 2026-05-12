@@ -1,12 +1,14 @@
 import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useGameStore } from '../store/gameStore';
 import { socketClient } from '../api/socket';
-import type { RoomDetail, GameState, Player, GameResult } from 'shared';
+import type { RoomDetail, GameState, TurnInfo, GameResult } from 'shared';
 
 export function useSocket() {
   const { user, updateBalance } = useAuthStore();
   const gameStore = useGameStore();
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!user) return;
@@ -26,29 +28,37 @@ export function useSocket() {
     const socket = socketClient.getSocket();
     if (!socket) return;
 
-    socket.on('room:joined', (data: { room: RoomDetail }) => {
+    socket.on('room:joined', (data: { room: RoomDetail; asObserver: boolean }) => {
       gameStore.setCurrentRoom(data.room);
+      gameStore.setIsObserver(data.asObserver);
+      navigate(`/room/${data.room.id}`);
     });
 
-    socket.on('room:player_joined', (data: { player: Player }) => {
-      gameStore.addPlayer(data.player);
-    });
-
-    socket.on('room:player_left', (data: { playerId: string }) => {
-      gameStore.removePlayer(data.playerId);
+    socket.on('room:left', () => {
+      gameStore.setCurrentRoom(null);
+      gameStore.reset();
+      navigate('/lobby');
     });
 
     socket.on('room:player_ready', (data: { playerId: string; ready: boolean }) => {
-      gameStore.updatePlayerReady(data.playerId, data.ready);
+      const room = gameStore.currentRoom;
+      if (room) {
+        gameStore.setCurrentRoom({
+          ...room,
+          players: room.players.map((p) =>
+            p.id === data.playerId ? { ...p, isReady: data.ready } : p
+          ),
+        });
+      }
     });
 
     socket.on('game:started', (data: { gameState: GameState }) => {
       gameStore.setGameState(data.gameState);
+      navigate(`/game/${gameStore.currentRoom?.id}`);
     });
 
     socket.on('game:state', (data: { gameState: GameState }) => {
       gameStore.setGameState(data.gameState);
-      // Update balance from game state (real-time)
       if (data.gameState.players) {
         const myPlayer = data.gameState.players.find((p) => p.id === user?.id);
         if (myPlayer && myPlayer.balance !== user?.balance) {
@@ -57,36 +67,29 @@ export function useSocket() {
       }
     });
 
-    socket.on(
-      'game:turn',
-      (data: { playerId: string; validActions: import('shared').GameActionType[] }) => {
-        if (data.playerId === user.id) {
-          gameStore.setIsMyTurn(true);
-          gameStore.setValidActions(data.validActions);
-        } else {
-          gameStore.setIsMyTurn(false);
-          gameStore.setValidActions([]);
-        }
+    socket.on('game:turn', (data: TurnInfo) => {
+      if (data.playerId === user?.id) {
+        gameStore.setIsMyTurn(true);
+        gameStore.setValidActions(data.validActions);
+        gameStore.setTimerSeconds(data.remainingSeconds);
+      } else {
+        gameStore.setIsMyTurn(false);
+        gameStore.setValidActions([]);
       }
-    );
+    });
+
+    socket.on('game:timer_update', (data: { remainingSeconds: number }) => {
+      gameStore.setTimerSeconds(data.remainingSeconds);
+    });
 
     socket.on('game:ended', (data: { results: GameResult[] }) => {
+      gameStore.setGameState(null);
+      gameStore.setIsMyTurn(false);
+      gameStore.setValidActions([]);
       const myResult = data.results.find((r) => r.playerId === user?.id);
       if (myResult) {
         console.log('Game result:', myResult);
-        // Calculate new balance from result
-        // result.amount is the net win/loss (positive for win, negative for loss)
-        // For blackjack: amount is bet * 1.5 for blackjack, bet for win, -bet for loss
-        // New balance should come from the game state, not calculated here
       }
-      gameStore.setGameState(null);
-      // Refresh balance from server after game ends
-      // The game:state before game:ended should have updated balance
-    });
-
-    socket.on('quickmatch:found', (data: { roomId: string }) => {
-      gameStore.setCurrentRoom(null);
-      window.location.href = `/room/${data.roomId}`;
     });
 
     socket.on('error', (data: { code: string; message: string }) => {
@@ -96,17 +99,16 @@ export function useSocket() {
 
     return () => {
       socket.off('room:joined');
-      socket.off('room:player_joined');
-      socket.off('room:player_left');
+      socket.off('room:left');
       socket.off('room:player_ready');
       socket.off('game:started');
       socket.off('game:state');
       socket.off('game:turn');
+      socket.off('game:timer_update');
       socket.off('game:ended');
-      socket.off('quickmatch:found');
       socket.off('error');
     };
-  }, [user]);
+  }, [user, navigate, gameStore, updateBalance]);
 
   return socketClient;
 }

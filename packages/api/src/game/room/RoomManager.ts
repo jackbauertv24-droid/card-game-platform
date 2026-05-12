@@ -579,8 +579,13 @@ export class RoomManager {
   }
 
   getActivePlayers(roomId: string): SeatedPlayer[] {
+    this.rooms.delete(roomId);
     const room = this.getRoom(roomId);
     if (!room) return [];
     return room.players.filter((p) => p.status === 'connected' && !p.isFolded);
+  }
+
+  invalidateCache(roomId: string): void {
+    this.rooms.delete(roomId);
   }
 }

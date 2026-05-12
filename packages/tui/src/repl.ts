@@ -81,6 +81,15 @@ async function connectSocket(): Promise<void> {
     await socketClient.connect(SOCKET_URL, state.token);
     state.connected = true;
 
+    socketClient.setOnRoomJoined((room, asObserver) => {
+      state.room = room;
+      state.isObserver = asObserver;
+      saveState();
+      console.log(`\n[Room joined: ${room.name}]`);
+      console.log(`[Status: ${asObserver ? 'Observer' : 'Player'}]`);
+      printRoom();
+    });
+
     socketClient.setOnGameState((gs) => {
       state.gameState = gs;
       saveState();
@@ -422,99 +431,33 @@ const commands: Record<string, (args: string[]) => Promise<void> | void> = {
       return;
     }
     await connectSocket();
-
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socketClient.setOnGameStarted((gs) => {
-          state.gameState = gs;
-          saveState();
-          console.log('\nGame started!');
-          printGameState();
-          resolve();
-        });
-        socketClient.setOnError((msg) => reject(new Error(msg)));
-        socketClient.startGame();
-      });
-    } catch (err) {
-      console.error((err as Error).message);
-    }
+    socketClient.startGame();
+    console.log('Starting game...');
   },
 
-  async bet(args) {
+  async bet(args: string[]) {
     if (args.length < 1) {
       console.log('Usage: bet <amount>');
       return;
     }
     await connectSocket();
     const amount = parseInt(args[0]);
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socketClient.setOnGameState((gs) => {
-          state.gameState = gs;
-          saveState();
-          printGameState();
-          resolve();
-        });
-        socketClient.setOnError((msg) => reject(new Error(msg)));
-        socketClient.sendAction({ type: 'bet', amount });
-      });
-    } catch (err) {
-      console.error((err as Error).message);
-    }
+    socketClient.sendAction({ type: 'bet', amount });
   },
 
   async hit() {
     await connectSocket();
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socketClient.setOnGameState((gs) => {
-          state.gameState = gs;
-          saveState();
-          printGameState();
-          resolve();
-        });
-        socketClient.setOnError((msg) => reject(new Error(msg)));
-        socketClient.sendAction({ type: 'hit' });
-      });
-    } catch (err) {
-      console.error((err as Error).message);
-    }
+    socketClient.sendAction({ type: 'hit' });
   },
 
   async stand() {
     await connectSocket();
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socketClient.setOnGameState((gs) => {
-          state.gameState = gs;
-          saveState();
-          printGameState();
-          resolve();
-        });
-        socketClient.setOnError((msg) => reject(new Error(msg)));
-        socketClient.sendAction({ type: 'stand' });
-      });
-    } catch (err) {
-      console.error((err as Error).message);
-    }
+    socketClient.sendAction({ type: 'stand' });
   },
 
   async double() {
     await connectSocket();
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socketClient.setOnGameState((gs) => {
-          state.gameState = gs;
-          saveState();
-          printGameState();
-          resolve();
-        });
-        socketClient.setOnError((msg) => reject(new Error(msg)));
-        socketClient.sendAction({ type: 'double' });
-      });
-    } catch (err) {
-      console.error((err as Error).message);
-    }
+    socketClient.sendAction({ type: 'double' });
   },
 
   fold() {

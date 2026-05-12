@@ -1,14 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useGameStore } from '../store/gameStore';
 import { useSocket } from '../hooks/useSocket';
-import type { Room, GameType } from 'shared';
+import type { RoomPreview, RoomDetail, GameType } from 'shared';
 
 export default function LobbyScreen() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [gameType, setGameType] = useState<GameType>('blackjack');
-  const [rooms, setRooms] = useState<Room[]>([]);
+  const [rooms, setRooms] = useState<RoomPreview[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const { user, logout } = useAuthStore();
   const gameStore = useGameStore();
@@ -19,11 +19,17 @@ export default function LobbyScreen() {
     loadRooms();
   }, [gameType]);
 
+  useEffect(() => {
+    if (gameStore.currentRoom) {
+      loadRooms();
+    }
+  }, [gameStore.currentRoom]);
+
   const loadRooms = async () => {
     setRefreshing(true);
     const skt = socket.getSocket();
     if (skt) {
-      skt.emit('room:list', { gameType }, (response) => {
+      skt.emit('room:list', { gameType, includePlaying: true }, (response) => {
         setRooms(response.rooms);
         setRefreshing(false);
       });
@@ -42,15 +48,45 @@ export default function LobbyScreen() {
     const skt = socket.getSocket();
     if (!skt) return;
 
-    skt.emit('room:join', { roomId }, (response) => {
-      if (response.success && response.room) {
-        gameStore.setCurrentRoom(response.room);
-        navigate(`/room/${roomId}`);
-      } else {
-        alert(response.message || 'Failed to join room');
-      }
-    });
+    if (gameStore.currentRoom && gameStore.currentRoom.id === roomId) {
+      navigate(`/room/${roomId}`);
+      return;
+    }
+
+    if (gameStore.currentRoom) {
+      skt.emit('room:leave', {}, () => {
+        gameStore.setCurrentRoom(null);
+        gameStore.reset();
+        skt.emit('room:join', { roomId, asObserver: true }, (response) => {
+          if (response.success && response.room) {
+            gameStore.setCurrentRoom(response.room);
+            gameStore.setIsObserver(true);
+            navigate(`/room/${roomId}`);
+          } else {
+            alert(response.message || 'Failed to join room');
+          }
+        });
+      });
+    } else {
+      skt.emit('room:join', { roomId, asObserver: true }, (response) => {
+        if (response.success && response.room) {
+          gameStore.setCurrentRoom(response.room);
+          gameStore.setIsObserver(true);
+          navigate(`/room/${roomId}`);
+        } else {
+          alert(response.message || 'Failed to join room');
+        }
+      });
+    }
   };
+
+  const handleRejoinRoom = () => {
+    if (gameStore.currentRoom) {
+      navigate(`/room/${gameStore.currentRoom.id}`);
+    }
+  };
+
+  const currentRoomId = gameStore.currentRoom?.id;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800">
@@ -70,6 +106,25 @@ export default function LobbyScreen() {
       </header>
 
       <main className="container mx-auto px-6 py-8">
+        {gameStore.currentRoom && (
+          <div className="bg-gold/20 border-2 border-gold rounded-xl p-6 mb-8">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-bold text-gold">You are in a room</h2>
+                <p className="text-white mt-1">{gameStore.currentRoom.name}</p>
+                <p className="text-gray-300 text-sm">
+                  {gameStore.currentRoom.gameType.toUpperCase()} •
+                  {gameStore.isObserver ? 'Observer' : 'Player'} •
+                  {gameStore.currentRoom.players.length}/{gameStore.currentRoom.maxPlayers} players
+                </p>
+              </div>
+              <button onClick={handleRejoinRoom} className="btn-primary">
+                Rejoin Room
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex gap-4 mb-8">
           <button
             onClick={() => setGameType('blackjack')}
@@ -134,22 +189,34 @@ export default function LobbyScreen() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {rooms.map((room) => (
-              <div
-                key={room.id}
-                className="bg-gray-800 rounded-xl p-6 border border-gray-700 hover:border-gold cursor-pointer transition-all"
-                onClick={() => handleJoinRoom(room.id)}
-              >
-                <h3 className="text-lg font-semibold text-white">{room.name}</h3>
-                <div className="mt-2 text-gray-400">
-                  <p>Game: {room.gameType.toUpperCase()}</p>
-                  <p>
-                    Players: {room.playerCount}/{room.maxPlayers}
-                  </p>
-                  <p>Min Bet: {room.minBet}</p>
+            {rooms.map((room) => {
+              const isCurrentRoom = room.id === currentRoomId;
+              return (
+                <div
+                  key={room.id}
+                  className={`bg-gray-800 rounded-xl p-6 border transition-all ${
+                    isCurrentRoom
+                      ? 'border-gold bg-gold/10'
+                      : 'border-gray-700 hover:border-gold cursor-pointer'
+                  }`}
+                  onClick={() => !isCurrentRoom && handleJoinRoom(room.id)}
+                >
+                  <h3 className="text-lg font-semibold text-white">{room.name}</h3>
+                  <div className="mt-2 text-gray-400">
+                    <p>Game: {room.gameType.toUpperCase()}</p>
+                    <p>
+                      Players: {room.playerCount}/{room.maxPlayers}
+                    </p>
+                    <p>Min Bet: {room.minBet}</p>
+                  </div>
+                  {isCurrentRoom && (
+                    <button onClick={handleRejoinRoom} className="btn-primary mt-4 w-full">
+                      Rejoin
+                    </button>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>
@@ -283,5 +350,3 @@ function CreateRoomModal({
     </div>
   );
 }
-
-import type { RoomDetail } from 'shared';

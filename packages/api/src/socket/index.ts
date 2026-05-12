@@ -3,6 +3,7 @@ import type { Server as HttpServer } from 'http';
 import type { ServerToClientEvents, ClientToServerEvents } from 'shared';
 import { verifyToken } from '../auth/service';
 import db from '../db';
+import { roomManager } from '../game/room';
 import { RoomManager } from '../game/room/RoomManager';
 import { QuickMatch } from '../game/matching/QuickMatch';
 import { handleConnection } from './handlers/connection';
@@ -20,7 +21,6 @@ export function setupSocket(httpServer: HttpServer): GameSocketServer {
     },
   });
 
-  const roomManager = new RoomManager();
   const quickMatch = new QuickMatch(roomManager, io);
 
   io.use((socket, next) => {
