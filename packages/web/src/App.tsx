@@ -5,7 +5,6 @@ import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
 import LobbyScreen from './screens/LobbyScreen';
 import RoomScreen from './screens/RoomScreen';
-import GameScreen from './screens/GameScreen';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore();
@@ -34,14 +33,6 @@ export default function App() {
           element={
             <ProtectedRoute>
               <RoomScreen />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/game/:roomId"
-          element={
-            <ProtectedRoute>
-              <GameScreen />
             </ProtectedRoute>
           }
         />

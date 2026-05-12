@@ -232,7 +232,15 @@ export default function RoomScreen() {
             timerSeconds={gameStore.timerSeconds}
             betAmount={betAmount}
             setBetAmount={setBetAmount}
+            standUpAfterRound={gameStore.standUpAfterRound}
             onAction={handleAction}
+            onSetStandUpAfterRound={(standUp) => {
+              const skt = socket.getSocket();
+              if (skt) {
+                skt.emit('room:set-stand-up-after-round', { standUp });
+                gameStore.setStandUpAfterRound(standUp);
+              }
+            }}
           />
         )}
 
@@ -318,7 +326,9 @@ function GameView({
   timerSeconds,
   betAmount,
   setBetAmount,
+  standUpAfterRound,
   onAction,
+  onSetStandUpAfterRound,
 }: {
   gameState: import('shared').GameState;
   myPlayer: import('shared').Player | undefined;
@@ -328,7 +338,9 @@ function GameView({
   timerSeconds: number;
   betAmount: number;
   setBetAmount: (n: number) => void;
+  standUpAfterRound: boolean;
   onAction: (type: GameActionType, amount?: number) => void;
+  onSetStandUpAfterRound: (standUp: boolean) => void;
 }) {
   const showDealerHidden = gameState.phase === 'playing' || gameState.phase === 'betting';
 
@@ -432,6 +444,32 @@ function GameView({
               </button>
             )}
           </div>
+          <div className="mt-4">
+            <label className="flex items-center gap-2 text-gray-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={standUpAfterRound}
+                onChange={(e) => onSetStandUpAfterRound(e.target.checked)}
+                className="w-4 h-4"
+              />
+              <span className="text-sm">Stand up after this round</span>
+            </label>
+          </div>
+        </div>
+      )}
+
+      {!isObserver && myPlayer && gameState.phase === 'playing' && !isMyTurn && (
+        <div className="text-center">
+          <p className="text-gray-400 mb-4">Waiting for other players...</p>
+          <label className="flex items-center gap-2 text-gray-400 cursor-pointer justify-center">
+            <input
+              type="checkbox"
+              checked={standUpAfterRound}
+              onChange={(e) => onSetStandUpAfterRound(e.target.checked)}
+              className="w-4 h-4"
+            />
+            <span className="text-sm">Stand up after this round</span>
+          </label>
         </div>
       )}
 

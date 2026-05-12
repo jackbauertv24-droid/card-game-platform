@@ -7,6 +7,8 @@ interface GameStore {
   gameResults: GameResult[] | null;
   myPlayerId: string | null;
   isObserver: boolean;
+  isStandby: boolean;
+  standUpAfterRound: boolean;
   timerSeconds: number;
   isMyTurn: boolean;
   validActions: GameActionType[];
@@ -18,6 +20,8 @@ interface GameStore {
   setValidActions: (actions: GameActionType[]) => void;
   setIsMyTurn: (isTurn: boolean) => void;
   setIsObserver: (isObserver: boolean) => void;
+  setIsStandby: (isStandby: boolean) => void;
+  setStandUpAfterRound: (standUp: boolean) => void;
   setTimerSeconds: (seconds: number) => void;
   reset: () => void;
 }
@@ -28,6 +32,8 @@ export const useGameStore = create<GameStore>((set) => ({
   gameResults: null,
   myPlayerId: null,
   isObserver: false,
+  isStandby: false,
+  standUpAfterRound: false,
   timerSeconds: 30,
   isMyTurn: false,
   validActions: [],
@@ -39,6 +45,8 @@ export const useGameStore = create<GameStore>((set) => ({
   setValidActions: (actions) => set({ validActions: actions }),
   setIsMyTurn: (isTurn) => set({ isMyTurn: isTurn }),
   setIsObserver: (isObserver) => set({ isObserver: isObserver }),
+  setIsStandby: (isStandby) => set({ isStandby: isStandby }),
+  setStandUpAfterRound: (standUp) => set({ standUpAfterRound: standUp }),
   setTimerSeconds: (seconds) => set({ timerSeconds: seconds }),
   reset: () =>
     set({
@@ -46,6 +54,8 @@ export const useGameStore = create<GameStore>((set) => ({
       gameState: null,
       gameResults: null,
       isObserver: false,
+      isStandby: false,
+      standUpAfterRound: false,
       timerSeconds: 30,
       isMyTurn: false,
       validActions: [],

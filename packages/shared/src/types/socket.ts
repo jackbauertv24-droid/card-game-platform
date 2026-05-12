@@ -7,10 +7,11 @@ export interface ServerToClientEvents {
   'auth:error': (data: { message: string }) => void;
 
   'room:created': (data: { room: Room }) => void;
-  'room:joined': (data: { room: RoomDetail; asObserver: boolean }) => void;
+  'room:joined': (data: { room: RoomDetail; asObserver: boolean; gameState?: GameState }) => void;
   'room:left': (data: { roomId: string }) => void;
   'room:list': (data: { rooms: RoomPreview[] }) => void;
   'room:preview': (data: { room: RoomDetail; gameState?: GameState }) => void;
+  'room:state': (data: { room: RoomDetail }) => void;
 
   'room:observer_joined': (data: { observer: Observer }) => void;
   'room:observer_left': (data: { userId: string }) => void;
@@ -19,6 +20,7 @@ export interface ServerToClientEvents {
   'room:player_unseated': (data: { playerId: string; seatIndex: number }) => void;
   'room:player_left': (data: { playerId: string }) => void;
   'room:player_ready': (data: { playerId: string; ready: boolean }) => void;
+  'room:player_stand_up_after_round': (data: { playerId: string; standUp: boolean }) => void;
 
   'game:started': (data: { gameState: GameState }) => void;
   'game:state': (data: { gameState: GameState }) => void;
@@ -70,6 +72,7 @@ export interface ClientToServerEvents {
   ) => void;
   'room:stand-up': (data: {}, callback: (response: { success: boolean }) => void) => void;
   'room:set-ready': (data: { ready: boolean }) => void;
+  'room:set-stand-up-after-round': (data: { standUp: boolean }) => void;
 
   'game:start': (
     data: {},

@@ -28,11 +28,17 @@ export function useSocket() {
     const socket = socketClient.getSocket();
     if (!socket) return;
 
-    socket.on('room:joined', (data: { room: RoomDetail; asObserver: boolean }) => {
-      gameStore.setCurrentRoom(data.room);
-      gameStore.setIsObserver(data.asObserver);
-      navigate(`/room/${data.room.id}`);
-    });
+    socket.on(
+      'room:joined',
+      (data: { room: RoomDetail; asObserver: boolean; gameState?: GameState }) => {
+        gameStore.setCurrentRoom(data.room);
+        gameStore.setIsObserver(data.asObserver);
+        if (data.gameState) {
+          gameStore.setGameState(data.gameState);
+        }
+        navigate(`/room/${data.room.id}`);
+      }
+    );
 
     socket.on('room:left', () => {
       gameStore.setCurrentRoom(null);
@@ -52,9 +58,76 @@ export function useSocket() {
       }
     });
 
+    socket.on(
+      'room:player_seated',
+      (data: { player: import('shared').SeatedPlayer; seatIndex: number }) => {
+        const room = gameStore.currentRoom;
+        if (room) {
+          const existingPlayer = room.players.find((p) => p.id === data.player.id);
+          if (!existingPlayer) {
+            gameStore.setCurrentRoom({
+              ...room,
+              players: [...room.players, data.player],
+              playerCount: room.playerCount + 1,
+              emptySeats: room.emptySeats.filter((s) => s !== data.seatIndex),
+            });
+          }
+        }
+      }
+    );
+
+    socket.on('room:player_unseated', (data: { playerId: string; seatIndex: number }) => {
+      const room = gameStore.currentRoom;
+      if (room) {
+        gameStore.setCurrentRoom({
+          ...room,
+          players: room.players.filter((p) => p.id !== data.playerId),
+          playerCount: room.playerCount - 1,
+          emptySeats: [...room.emptySeats, data.seatIndex].sort((a, b) => a - b),
+        });
+      }
+      if (data.playerId === user?.id) {
+        gameStore.setIsObserver(true);
+      }
+    });
+
+    socket.on('room:observer_joined', (data: { observer: import('shared').Observer }) => {
+      const room = gameStore.currentRoom;
+      if (room) {
+        const existingObserver = room.observers.find((o) => o.id === data.observer.id);
+        if (!existingObserver) {
+          gameStore.setCurrentRoom({
+            ...room,
+            observers: [...room.observers, data.observer],
+            observerCount: room.observerCount + 1,
+          });
+        }
+      }
+    });
+
+    socket.on('room:observer_left', (data: { userId: string }) => {
+      const room = gameStore.currentRoom;
+      if (room) {
+        gameStore.setCurrentRoom({
+          ...room,
+          observers: room.observers.filter((o) => o.id !== data.userId),
+          observerCount: room.observerCount - 1,
+        });
+      }
+    });
+
+    socket.on(
+      'room:player_stand_up_after_round',
+      (data: { playerId: string; standUp: boolean }) => {
+        if (data.playerId === user?.id) {
+          gameStore.setStandUpAfterRound(data.standUp);
+        }
+      }
+    );
+
     socket.on('game:started', (data: { gameState: GameState }) => {
       gameStore.setGameState(data.gameState);
-      navigate(`/game/${gameStore.currentRoom?.id}`);
+      gameStore.setGameResults(null);
     });
 
     socket.on('game:state', (data: { gameState: GameState }) => {
@@ -68,10 +141,10 @@ export function useSocket() {
     });
 
     socket.on('game:turn', (data: TurnInfo) => {
+      gameStore.setTimerSeconds(data.remainingSeconds);
       if (data.playerId === user?.id) {
         gameStore.setIsMyTurn(true);
         gameStore.setValidActions(data.validActions);
-        gameStore.setTimerSeconds(data.remainingSeconds);
       } else {
         gameStore.setIsMyTurn(false);
         gameStore.setValidActions([]);
@@ -83,12 +156,17 @@ export function useSocket() {
     });
 
     socket.on('game:ended', (data: { results: GameResult[] }) => {
+      gameStore.setGameState(null);
       gameStore.setIsMyTurn(false);
       gameStore.setValidActions([]);
       gameStore.setGameResults(data.results);
       const myResult = data.results.find((r) => r.playerId === user?.id);
-      if (myResult && myResult.amount > 0) {
+      if (myResult && user) {
         updateBalance(user.balance + myResult.amount);
+      }
+      if (gameStore.standUpAfterRound) {
+        gameStore.setStandUpAfterRound(false);
+        gameStore.setIsObserver(true);
       }
     });
 
@@ -99,8 +177,13 @@ export function useSocket() {
 
     return () => {
       socket.off('room:joined');
+      socket.off('room:state');
       socket.off('room:left');
       socket.off('room:player_ready');
+      socket.off('room:player_seated');
+      socket.off('room:player_unseated');
+      socket.off('room:observer_joined');
+      socket.off('room:observer_left');
       socket.off('game:started');
       socket.off('game:state');
       socket.off('game:turn');

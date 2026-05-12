@@ -588,4 +588,81 @@ export class RoomManager {
   invalidateCache(roomId: string): void {
     this.rooms.delete(roomId);
   }
+
+  setStandUpAfterRound(
+    userId: string,
+    standUp: boolean
+  ): { roomId: string; player: SeatedPlayer } | null {
+    const room = this.getPlayersRoom(userId);
+    if (!room) return null;
+
+    const player = room.players.find((p) => p.id === userId);
+    if (!player) return null;
+
+    db.prepare(
+      'UPDATE room_players SET stand_up_after_round = ? WHERE room_id = ? AND user_id = ?'
+    ).run(standUp ? 1 : 0, room.id, userId);
+    return { roomId: room.id, player };
+  }
+
+  autoReadyPlayers(roomId: string): void {
+    const room = this.getRoom(roomId);
+    if (!room) return;
+
+    for (const player of room.players) {
+      player.isReady = true;
+    }
+    db.prepare('UPDATE room_players SET is_ready = 1 WHERE room_id = ?').run(roomId);
+    this.rooms.set(roomId, room);
+  }
+
+  standUpMarkedPlayers(roomId: string): { players: SeatedPlayer[]; observers: Observer[] } {
+    const room = this.getRoom(roomId);
+    if (!room) return { players: [], observers: [] };
+
+    const markedPlayers = db
+      .prepare('SELECT user_id FROM room_players WHERE room_id = ? AND stand_up_after_round = 1')
+      .all(roomId) as { user_id: string }[];
+
+    const stoodUpPlayers: SeatedPlayer[] = [];
+    const newObservers: Observer[] = [];
+
+    for (const { user_id } of markedPlayers) {
+      const player = room.players.find((p) => p.id === user_id);
+      if (player) {
+        stoodUpPlayers.push(player);
+        const now = new Date().toISOString();
+
+        db.prepare('DELETE FROM room_players WHERE room_id = ? AND user_id = ?').run(
+          roomId,
+          user_id
+        );
+        db.prepare('INSERT INTO room_observers (room_id, user_id, joined_at) VALUES (?, ?, ?)').run(
+          roomId,
+          user_id,
+          now
+        );
+        db.prepare(
+          'UPDATE room_players SET stand_up_after_round = 0 WHERE room_id = ? AND user_id = ?'
+        ).run(roomId, user_id);
+
+        room.emptySeats.push(player.seatIndex);
+        room.emptySeats.sort((a, b) => a - b);
+        room.players = room.players.filter((p) => p.id !== user_id);
+        room.playerCount = room.players.length;
+
+        const observer: Observer = {
+          id: user_id,
+          username: player.username,
+          joinedAt: now,
+        };
+        room.observers.push(observer);
+        room.observerCount = room.observers.length;
+        newObservers.push(observer);
+      }
+    }
+
+    this.rooms.set(roomId, room);
+    return { players: stoodUpPlayers, observers: newObservers };
+  }
 }

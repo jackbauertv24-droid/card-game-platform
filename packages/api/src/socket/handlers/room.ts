@@ -214,6 +214,15 @@ export function handleRoomEvents(
     }
   });
 
+  socket.on('room:set-stand-up-after-round', (data) => {
+    const result = roomManager.setStandUpAfterRound(user.id, data.standUp);
+    if (result) {
+      socket
+        .to(result.roomId)
+        .emit('room:player_stand_up_after_round', { playerId: user.id, standUp: data.standUp });
+    }
+  });
+
   socket.on('quickmatch:join', (data) => {
     const existingRoom = roomManager.getUserRoom(user.id);
     if (existingRoom) {

@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS room_players (
     status TEXT DEFAULT 'connected',
     disconnected_at TEXT,
     joined_at TEXT NOT NULL,
+    stand_up_after_round INTEGER DEFAULT 0,
     PRIMARY KEY (room_id, user_id)
 );
 

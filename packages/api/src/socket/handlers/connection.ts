@@ -1,7 +1,19 @@
 import type { GameSocketServer } from '../index';
 import type { Socket } from 'socket.io';
-import type { ClientToServerEvents, ServerToClientEvents } from 'shared';
+import type { ClientToServerEvents, ServerToClientEvents, GameState } from 'shared';
 import type { RoomManager } from '../../game/room/RoomManager';
+import db from '../../db';
+
+function loadGameState(roomId: string): GameState | null {
+  const row = db
+    .prepare(
+      `SELECT state FROM games WHERE room_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`
+    )
+    .get(roomId) as { state: string } | undefined;
+
+  if (!row) return null;
+  return JSON.parse(row.state) as GameState;
+}
 
 export function handleConnection(
   io: GameSocketServer,
@@ -20,7 +32,8 @@ export function handleConnection(
 
     const result = roomManager.setPlayerStatus(user.id, 'connected');
     if (result) {
-      socket.emit('room:joined', { room: playerRoom, asObserver: false });
+      const gameState = loadGameState(playerRoom.id);
+      socket.emit('room:joined', { room: playerRoom, asObserver: false, gameState });
       socket.to(playerRoom.id).emit('room:player_ready', {
         playerId: user.id,
         ready: playerRoom.players.find((p) => p.id === user.id)?.isReady ?? false,
@@ -32,7 +45,8 @@ export function handleConnection(
     const observerRoom = roomManager.getObserversRoom(user.id);
     if (observerRoom) {
       socket.join(observerRoom.id);
-      socket.emit('room:joined', { room: observerRoom, asObserver: true });
+      const gameState = loadGameState(observerRoom.id);
+      socket.emit('room:joined', { room: observerRoom, asObserver: true, gameState });
       socket.to(observerRoom.id).emit('room:observer_joined', {
         observer: observerRoom.observers.find((o) => o.id === user.id)!,
       });

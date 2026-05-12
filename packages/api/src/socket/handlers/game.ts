@@ -238,6 +238,24 @@ function handleGameEnd(
   db.prepare('UPDATE games SET ended_at = ? WHERE id = ?').run(new Date().toISOString(), gameId);
   roomManager.updateRoomStatus(roomId, 'waiting');
   roomManager.cleanDisconnectedPlayers(roomId);
+
+  const stoodUp = roomManager.standUpMarkedPlayers(roomId);
+  for (const player of stoodUp.players) {
+    io.to(roomId).emit('room:player_unseated', {
+      playerId: player.id,
+      seatIndex: player.seatIndex,
+    });
+  }
+  for (const observer of stoodUp.observers) {
+    io.to(roomId).emit('room:observer_joined', { observer });
+  }
+
+  roomManager.autoReadyPlayers(roomId);
+  const updatedRoom = roomManager.getRoom(roomId);
+  if (updatedRoom) {
+    io.to(roomId).emit('room:state', { room: updatedRoom });
+  }
+
   activeGames.delete(roomId);
   clearTurnTimer(roomId);
   clearTimerInterval(roomId);
