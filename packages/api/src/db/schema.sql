@@ -32,8 +32,16 @@ CREATE TABLE IF NOT EXISTS room_players (
     user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
     seat_index INTEGER NOT NULL,
     is_ready INTEGER DEFAULT 0,
+    is_player INTEGER DEFAULT 1,
     status TEXT DEFAULT 'connected',
     disconnected_at TEXT,
+    joined_at TEXT NOT NULL,
+    PRIMARY KEY (room_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS room_observers (
+    room_id TEXT REFERENCES rooms(id) ON DELETE CASCADE,
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
     joined_at TEXT NOT NULL,
     PRIMARY KEY (room_id, user_id)
 );
@@ -67,6 +75,8 @@ CREATE INDEX IF NOT EXISTS idx_rooms_status ON rooms(status);
 CREATE INDEX IF NOT EXISTS idx_rooms_game_type ON rooms(game_type);
 CREATE INDEX IF NOT EXISTS idx_room_players_room ON room_players(room_id);
 CREATE INDEX IF NOT EXISTS idx_room_players_user ON room_players(user_id);
+CREATE INDEX IF NOT EXISTS idx_room_observers_room ON room_observers(room_id);
+CREATE INDEX IF NOT EXISTS idx_room_observers_user ON room_observers(user_id);
 CREATE INDEX IF NOT EXISTS idx_games_room_id ON games(room_id);
 CREATE INDEX IF NOT EXISTS idx_games_active ON games(room_id, ended_at);
 CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id);

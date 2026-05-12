@@ -1,14 +1,21 @@
 import type { GameSocketServer } from '../index';
 import type { Socket } from 'socket.io';
-import type { ClientToServerEvents, ServerToClientEvents, GameState, GameActionType } from 'shared';
+import type {
+  ClientToServerEvents,
+  ServerToClientEvents,
+  GameState,
+  GameActionType,
+  TurnInfo,
+} from 'shared';
 import { TURN_TIMEOUT_SECONDS } from 'shared';
-import type { RoomManager } from '../../game/room/RoomManager';
+import type { RoomManager, InMemoryRoom } from '../../game/room/RoomManager';
 import { GameEngine } from '../../game/engine/GameEngine';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../../db';
 
 const activeGames: Map<string, GameEngine> = new Map();
 const turnTimers: Map<string, NodeJS.Timeout> = new Map();
+const timerIntervals: Map<string, NodeJS.Timeout> = new Map();
 
 function saveGameState(gameId: string, roomId: string, gameState: GameState, deck?: unknown) {
   const stateJson = JSON.stringify(gameState);
@@ -16,10 +23,8 @@ function saveGameState(gameId: string, roomId: string, gameState: GameState, dec
   const now = new Date().toISOString();
 
   db.prepare(
-    `
-    INSERT OR REPLACE INTO games (id, room_id, game_type, state, deck, current_player_index, turn_started_at, started_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT started_at FROM games WHERE id = ?), ?))
-  `
+    `INSERT OR REPLACE INTO games (id, room_id, game_type, state, deck, current_player_index, turn_started_at, started_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT started_at FROM games WHERE id = ?), ?))`
   ).run(
     gameId,
     roomId,
@@ -38,11 +43,9 @@ function loadGameState(
 ): { gameId: string; state: GameState; deck?: unknown } | null {
   const row = db
     .prepare(
-      `
-    SELECT id, state, deck, current_player_index, turn_started_at 
-    FROM games WHERE room_id = ? AND ended_at IS NULL 
-    ORDER BY started_at DESC LIMIT 1
-  `
+      `SELECT id, state, deck, current_player_index, turn_started_at 
+     FROM games WHERE room_id = ? AND ended_at IS NULL 
+     ORDER BY started_at DESC LIMIT 1`
     )
     .get(roomId) as
     | {
@@ -58,9 +61,68 @@ function loadGameState(
 
   const state = JSON.parse(row.state) as GameState;
   state.gameId = row.id;
+  state.turnStartedAt = row.turn_started_at;
   const deck = row.deck ? JSON.parse(row.deck) : undefined;
 
   return { gameId: row.id, state, deck };
+}
+
+function createTurnInfo(
+  room: InMemoryRoom,
+  gameState: GameState,
+  validActions: GameActionType[]
+): TurnInfo | null {
+  const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+  if (!currentPlayer) return null;
+
+  const now = new Date();
+  const startedAt = gameState.turnStartedAt || now.toISOString();
+  const elapsed = Math.floor((now.getTime() - new Date(startedAt).getTime()) / 1000);
+  const remaining = Math.max(0, TURN_TIMEOUT_SECONDS - elapsed);
+
+  return {
+    playerId: currentPlayer.id,
+    playerName: currentPlayer.username,
+    seatIndex: currentPlayer.seatIndex,
+    validActions,
+    startedAt,
+    remainingSeconds: remaining,
+  };
+}
+
+function emitTurnInfo(
+  io: GameSocketServer,
+  roomId: string,
+  room: InMemoryRoom,
+  gameState: GameState,
+  validActions: GameActionType[]
+) {
+  const turnInfo = createTurnInfo(room, gameState, validActions);
+  if (turnInfo) {
+    io.to(roomId).emit('game:turn', turnInfo);
+
+    clearTimerInterval(roomId);
+
+    const interval = setInterval(() => {
+      const remaining = Math.max(0, turnInfo.remainingSeconds - 1);
+      io.to(roomId).emit('game:timer_update', { remainingSeconds: remaining });
+
+      if (remaining <= 0) {
+        clearInterval(interval);
+        timerIntervals.delete(roomId);
+      }
+    }, 1000);
+
+    timerIntervals.set(roomId, interval);
+  }
+}
+
+function clearTimerInterval(roomId: string) {
+  const existing = timerIntervals.get(roomId);
+  if (existing) {
+    clearInterval(existing);
+    timerIntervals.delete(roomId);
+  }
 }
 
 function startTurnTimer(
@@ -75,6 +137,7 @@ function startTurnTimer(
 
   const timer = setTimeout(() => {
     console.log(`[game] Turn timeout for player ${playerId} in room ${roomId}`);
+    clearTimerInterval(roomId);
 
     const room = roomManager.getRoom(roomId);
     if (!room) return;
@@ -89,6 +152,7 @@ function startTurnTimer(
     if (result.success) {
       const gameState = result.newState;
       gameState.gameId = gameId;
+      gameState.turnStartedAt = undefined;
       saveGameState(gameId, roomId, gameState, game.getDeck());
       io.to(roomId).emit('game:state', { gameState });
 
@@ -97,56 +161,14 @@ function startTurnTimer(
       }
 
       if (gameState.phase === 'finished') {
-        console.log(`[game] Game ended due to turn timeout in room ${roomId}`);
-
-        if (result.events) {
-          for (const event of result.events) {
-            if (event.type === 'game:end') {
-              const gameResults = event.data as import('shared').GameResult[];
-              io.to(roomId).emit('game:ended', { results: gameResults });
-
-              for (const gr of gameResults) {
-                const player = room.players.find((p) => p.id === gr.playerId);
-                if (player) {
-                  const newBalance = player.balance + gr.amount;
-                  player.balance = newBalance;
-                  db.prepare('UPDATE users SET balance = ? WHERE id = ?').run(
-                    newBalance,
-                    gr.playerId
-                  );
-
-                  db.prepare(
-                    'INSERT INTO transactions (id, user_id, amount, type, game_id, balance_after, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-                  ).run(
-                    uuidv4(),
-                    gr.playerId,
-                    gr.amount,
-                    gr.result,
-                    gameId,
-                    newBalance,
-                    new Date().toISOString()
-                  );
-                }
-              }
-            }
-          }
-        }
-
-        db.prepare('UPDATE games SET ended_at = ? WHERE id = ?').run(
-          new Date().toISOString(),
-          gameId
-        );
-        roomManager.updateRoomStatus(roomId, 'waiting');
-        roomManager.cleanDisconnectedPlayers(roomId);
-        activeGames.delete(roomId);
-        clearTurnTimer(roomId);
+        handleGameEnd(io, roomId, gameId, room, gameState, game, roomManager);
       } else if (gameState.phase === 'betting' || gameState.phase === 'playing') {
-        const nextPlayer = room.players[gameState.currentPlayerIndex];
+        const nextPlayer = gameState.players[gameState.currentPlayerIndex];
         if (nextPlayer && !nextPlayer.isFolded) {
-          io.to(roomId).emit('game:turn', {
-            playerId: nextPlayer.id,
-            validActions: gameState.phase === 'betting' ? ['bet'] : ['hit', 'stand'],
-          });
+          const validActions: GameActionType[] =
+            gameState.phase === 'betting' ? ['bet'] : ['hit', 'stand', 'double'];
+          gameState.turnStartedAt = new Date().toISOString();
+          emitTurnInfo(io, roomId, room, gameState, validActions);
           startTurnTimer(io, roomId, gameId, nextPlayer.id, game, roomManager);
         }
       }
@@ -166,6 +188,59 @@ function clearTurnTimer(roomId: string) {
   }
 }
 
+function handleGameEnd(
+  io: GameSocketServer,
+  roomId: string,
+  gameId: string,
+  room: InMemoryRoom,
+  gameState: GameState,
+  game: GameEngine,
+  roomManager: RoomManager
+) {
+  console.log(`[game] Game ended in room ${roomId}`);
+
+  if (game.handleAction) {
+    const dummyResult = game.handleAction(gameState.players[0]?.id || '', { type: 'stand' });
+    if (dummyResult.events) {
+      for (const event of dummyResult.events) {
+        if (event.type === 'game:end') {
+          const gameResults = event.data as import('shared').GameResult[];
+          io.to(roomId).emit('game:ended', { results: gameResults });
+
+          for (const gr of gameResults) {
+            const player = room.players.find((p) => p.id === gr.playerId);
+            if (player) {
+              const newBalance = player.balance + gr.amount;
+              player.balance = newBalance;
+              db.prepare('UPDATE users SET balance = ? WHERE id = ?').run(newBalance, gr.playerId);
+
+              db.prepare(
+                `INSERT INTO transactions (id, user_id, amount, type, game_id, balance_after, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`
+              ).run(
+                uuidv4(),
+                gr.playerId,
+                gr.amount,
+                gr.result,
+                gameId,
+                newBalance,
+                new Date().toISOString()
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+
+  db.prepare('UPDATE games SET ended_at = ? WHERE id = ?').run(new Date().toISOString(), gameId);
+  roomManager.updateRoomStatus(roomId, 'waiting');
+  roomManager.cleanDisconnectedPlayers(roomId);
+  activeGames.delete(roomId);
+  clearTurnTimer(roomId);
+  clearTimerInterval(roomId);
+}
+
 export function handleGameEvents(
   io: GameSocketServer,
   socket: Socket<ClientToServerEvents, ServerToClientEvents>,
@@ -177,7 +252,7 @@ export function handleGameEvents(
   socket.on('game:start', async (_data, callback) => {
     console.log(`[game:start] Received from ${user.username}`);
     try {
-      const room = roomManager.getPlayersRoom(user.id);
+      const room = roomManager.getUserRoom(user.id);
       if (!room) {
         callback({ success: false, message: 'You are not in a room' });
         return;
@@ -188,6 +263,12 @@ export function handleGameEvents(
         return;
       }
 
+      const activePlayers = roomManager.getActivePlayers(room.id);
+      if (activePlayers.length === 0) {
+        callback({ success: false, message: 'No seated players to start game' });
+        return;
+      }
+
       const existingGame = loadGameState(room.id);
       if (existingGame) {
         const game = new GameEngine(
@@ -195,18 +276,19 @@ export function handleGameEvents(
           room.id,
           room.gameType,
           room.minBet,
-          room.players
+          activePlayers
         );
         game.restoreState(existingGame.state, existingGame.deck);
         activeGames.set(room.id, game);
 
         io.to(room.id).emit('game:started', { gameState: existingGame.state });
 
-        const currentPlayer = room.players[existingGame.state.currentPlayerIndex];
+        const currentPlayer = existingGame.state.players[existingGame.state.currentPlayerIndex];
         if (currentPlayer && existingGame.state.phase !== 'finished') {
           const validActions: GameActionType[] =
             existingGame.state.phase === 'betting' ? ['bet'] : ['hit', 'stand', 'double'];
-          io.to(room.id).emit('game:turn', { playerId: currentPlayer.id, validActions });
+          existingGame.state.turnStartedAt = new Date().toISOString();
+          emitTurnInfo(io, room.id, room, existingGame.state, validActions);
           startTurnTimer(io, room.id, existingGame.gameId, currentPlayer.id, game, roomManager);
         }
 
@@ -216,7 +298,7 @@ export function handleGameEvents(
 
       console.log(`[game:start] Starting new game for room ${room.id}`);
       const gameId = uuidv4();
-      const game = new GameEngine(gameId, room.id, room.gameType, room.minBet, room.players);
+      const game = new GameEngine(gameId, room.id, room.gameType, room.minBet, activePlayers);
 
       activeGames.set(room.id, game);
       roomManager.updateRoomStatus(room.id, 'playing');
@@ -224,14 +306,15 @@ export function handleGameEvents(
 
       const initialState = game.start();
       initialState.gameId = gameId;
+      initialState.turnStartedAt = new Date().toISOString();
 
       saveGameState(gameId, room.id, initialState, game.getDeck());
 
       io.to(room.id).emit('game:started', { gameState: initialState });
 
-      const currentPlayer = room.players[initialState.currentPlayerIndex];
+      const currentPlayer = initialState.players[initialState.currentPlayerIndex];
       if (currentPlayer) {
-        io.to(room.id).emit('game:turn', { playerId: currentPlayer.id, validActions: ['bet'] });
+        emitTurnInfo(io, room.id, room, initialState, ['bet']);
         startTurnTimer(io, room.id, gameId, currentPlayer.id, game, roomManager);
       }
 
@@ -245,41 +328,46 @@ export function handleGameEvents(
   socket.on('game:action', async (data, callback) => {
     console.log(`[game:action] Received from ${user.username}:`, JSON.stringify(data));
     try {
-      const room = roomManager.getPlayersRoom(user.id);
+      const room = roomManager.getUserRoom(user.id);
       if (!room) {
         callback({ success: false, message: 'You are not in a room' });
         return;
       }
 
-      const game = activeGames.get(room.id);
-      let gameEngine: GameEngine | null = game || null;
+      const isPlayer = room.players.some((p) => p.id === user.id);
+      if (!isPlayer) {
+        callback({ success: false, message: 'You are an observer, not a player' });
+        return;
+      }
 
-      if (!gameEngine) {
+      let game = activeGames.get(room.id);
+      if (!game) {
         const loaded = loadGameState(room.id);
         if (loaded) {
+          const activePlayers = roomManager.getActivePlayers(room.id);
           const restoredGame = new GameEngine(
             loaded.gameId,
             room.id,
             room.gameType,
             room.minBet,
-            room.players
+            activePlayers
           );
           restoredGame.restoreState(loaded.state, loaded.deck);
           activeGames.set(room.id, restoredGame);
-          gameEngine = restoredGame;
+          game = restoredGame;
         } else {
           callback({ success: false, message: 'No active game' });
           return;
         }
       }
 
-      const currentPlayer = room.players[gameEngine.getState().currentPlayerIndex];
+      const currentPlayer = game.getState().players[game.getState().currentPlayerIndex];
       if (currentPlayer?.id !== user.id) {
         callback({ success: false, message: 'Not your turn' });
         return;
       }
 
-      const result = gameEngine.handleAction(user.id, data);
+      const result = game.handleAction(user.id, data);
 
       if (!result.success) {
         callback({ success: false, message: result.error || 'Invalid action' });
@@ -287,65 +375,31 @@ export function handleGameEvents(
       }
 
       clearTurnTimer(room.id);
+      clearTimerInterval(room.id);
 
       const newState = result.newState;
-      newState.gameId = gameEngine.gameId;
+      newState.gameId = game.gameId;
+      newState.turnStartedAt = undefined;
 
-      saveGameState(gameEngine.gameId, room.id, newState, gameEngine.getDeck());
+      saveGameState(game.gameId, room.id, newState, game.getDeck());
 
       io.to(room.id).emit('game:state', { gameState: newState });
 
       if (newState.phase === 'betting' || newState.phase === 'playing') {
-        const nextPlayer = room.players[newState.currentPlayerIndex];
+        const nextPlayer = newState.players[newState.currentPlayerIndex];
         if (nextPlayer && !nextPlayer.isFolded) {
           const validActions: GameActionType[] =
             newState.phase === 'betting' ? ['bet'] : ['hit', 'stand', 'double'];
-          io.to(room.id).emit('game:turn', { playerId: nextPlayer.id, validActions });
-          startTurnTimer(io, room.id, gameEngine.gameId, nextPlayer.id, gameEngine, roomManager);
+          newState.turnStartedAt = new Date().toISOString();
+          emitTurnInfo(io, room.id, room, newState, validActions);
+          startTurnTimer(io, room.id, game.gameId, nextPlayer.id, game, roomManager);
         }
       }
 
       if (result.events) {
         for (const event of result.events) {
           if (event.type === 'game:end') {
-            const gameResults = event.data as import('shared').GameResult[];
-            console.log('[game:action] GAME END - Results:', JSON.stringify(gameResults));
-
-            for (const gr of gameResults) {
-              const player = room.players.find((p) => p.id === gr.playerId);
-              if (player) {
-                const newBalance = player.balance + gr.amount;
-                player.balance = newBalance;
-                db.prepare('UPDATE users SET balance = ? WHERE id = ?').run(
-                  newBalance,
-                  gr.playerId
-                );
-
-                db.prepare(
-                  'INSERT INTO transactions (id, user_id, amount, type, game_id, balance_after, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-                ).run(
-                  uuidv4(),
-                  gr.playerId,
-                  gr.amount,
-                  gr.result,
-                  gameEngine.gameId,
-                  newBalance,
-                  new Date().toISOString()
-                );
-              }
-            }
-
-            db.prepare('UPDATE games SET ended_at = ? WHERE id = ?').run(
-              new Date().toISOString(),
-              gameEngine.gameId
-            );
-
-            io.to(room.id).emit('game:ended', { results: gameResults });
-
-            roomManager.updateRoomStatus(room.id, 'waiting');
-            roomManager.cleanDisconnectedPlayers(room.id);
-            activeGames.delete(room.id);
-            clearTurnTimer(room.id);
+            handleGameEnd(io, room.id, game.gameId, room, newState, game, roomManager);
           }
         }
       }

@@ -28,14 +28,25 @@ export interface Player {
 export interface GameState {
   phase: 'waiting' | 'betting' | 'playing' | 'dealer-turn' | 'showdown' | 'finished';
   currentPlayerIndex: number;
+  currentPlayerId?: string;
   players: Player[];
   dealerHand: Card[];
   dealerHiddenCard: boolean;
   pot: number;
   minBet: number;
   currentBet: number;
-  turnTimeout?: number;
   gameId?: string;
+  turnStartedAt?: string;
+  turnRemainingSeconds?: number;
+}
+
+export interface TurnInfo {
+  playerId: string;
+  playerName: string;
+  seatIndex: number;
+  validActions: GameActionType[];
+  startedAt: string;
+  remainingSeconds: number;
 }
 
 export type GameActionType = 'bet' | 'hit' | 'stand' | 'double' | 'fold' | 'surrender';
