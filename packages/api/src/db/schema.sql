@@ -27,12 +27,25 @@ CREATE TABLE IF NOT EXISTS rooms (
     ended_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS room_players (
+    room_id TEXT REFERENCES rooms(id) ON DELETE CASCADE,
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    seat_index INTEGER NOT NULL,
+    is_ready INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'connected',
+    disconnected_at TEXT,
+    joined_at TEXT NOT NULL,
+    PRIMARY KEY (room_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS games (
     id TEXT PRIMARY KEY,
     room_id TEXT REFERENCES rooms(id),
     game_type TEXT NOT NULL,
     state TEXT NOT NULL,
-    players TEXT NOT NULL,
+    deck TEXT,
+    current_player_index INTEGER DEFAULT 0,
+    turn_started_at TEXT,
     winner_id TEXT REFERENCES users(id),
     pot INTEGER,
     started_at TEXT NOT NULL,
@@ -52,5 +65,8 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_rooms_status ON rooms(status);
 CREATE INDEX IF NOT EXISTS idx_rooms_game_type ON rooms(game_type);
+CREATE INDEX IF NOT EXISTS idx_room_players_room ON room_players(room_id);
+CREATE INDEX IF NOT EXISTS idx_room_players_user ON room_players(user_id);
 CREATE INDEX IF NOT EXISTS idx_games_room_id ON games(room_id);
+CREATE INDEX IF NOT EXISTS idx_games_active ON games(room_id, ended_at);
 CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id);

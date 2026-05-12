@@ -10,7 +10,6 @@ export function handleConnection(
 ) {
   const user = socket.data.user;
   console.log(`[socket] User connected: ${user.username} (${socket.id})`);
-  console.log(`[socket] Socket connected: ${socket.connected}`);
 
   socket.emit('auth:success', { user, token: socket.handshake.auth.token });
   console.log(`[socket] Sent auth:success to ${user.username}`);
@@ -19,12 +18,21 @@ export function handleConnection(
   if (existingRoom) {
     socket.join(existingRoom.id);
 
-    const player = existingRoom.players.find((p) => p.id === user.id);
-    if (player) {
+    const result = roomManager.setPlayerStatus(user.id, 'connected');
+    if (result) {
       socket.emit('room:joined', { room: existingRoom });
-    } else {
-      roomManager.joinRoom(existingRoom.id, user.id);
-      socket.emit('room:joined', { room: roomManager.getRoom(existingRoom.id)! });
+      socket
+        .to(existingRoom.id)
+        .emit('room:player_ready', {
+          playerId: user.id,
+          ready: existingRoom.players.find((p) => p.id === user.id)?.isReady ?? false,
+        });
+
+      io.to(existingRoom.id).emit('room:player_joined', {
+        player: existingRoom.players.find((p) => p.id === user.id)!,
+      });
+
+      console.log(`[socket] User ${user.username} reconnected to room ${existingRoom.id}`);
     }
   }
 
@@ -36,9 +44,12 @@ export function handleConnection(
       const stillConnected = connectedSockets.some((s) => s.data.user?.id === user.id);
 
       if (!stillConnected) {
-        const leaveResult = roomManager.leaveRoom(user.id);
-        if (leaveResult) {
-          socket.to(leaveResult.roomId).emit('room:player_left', { playerId: user.id });
+        const result = roomManager.setPlayerStatus(user.id, 'disconnected');
+        if (result) {
+          console.log(
+            `[socket] User ${user.username} marked as disconnected in room ${result.roomId}`
+          );
+          socket.to(result.roomId).emit('room:player_left', { playerId: user.id });
           io.emit('room:list', { rooms: roomManager.getAllRooms() });
         }
       }

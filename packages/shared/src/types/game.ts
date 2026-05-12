@@ -3,6 +3,8 @@ export type GameType = 'blackjack' | 'poker' | 'custom';
 export type Suit = 'hearts' | 'diamonds' | 'clubs' | 'spades';
 export type Rank = '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | 'J' | 'Q' | 'K' | 'A';
 
+export type PlayerStatus = 'connected' | 'away' | 'disconnected';
+
 export interface Card {
   suit: Suit;
   rank: Rank;
@@ -18,6 +20,9 @@ export interface Player {
   isAllIn: boolean;
   currentBet: number;
   hand: Card[];
+  status: PlayerStatus;
+  lastActionAt?: string;
+  disconnectedAt?: string;
 }
 
 export interface GameState {
@@ -29,6 +34,8 @@ export interface GameState {
   pot: number;
   minBet: number;
   currentBet: number;
+  turnTimeout?: number;
+  gameId?: string;
 }
 
 export type GameActionType = 'bet' | 'hit' | 'stand' | 'double' | 'fold' | 'surrender';
@@ -43,3 +50,6 @@ export interface GameResult {
   result: 'win' | 'lose' | 'push' | 'blackjack';
   amount: number;
 }
+
+export const TURN_TIMEOUT_SECONDS = 30;
+export const RECONNECT_GRACE_SECONDS = 120;

@@ -45,6 +45,30 @@ export class GameEngine {
     return this.gameState;
   }
 
+  getDeck(): Deck {
+    return this.deck;
+  }
+
+  restoreState(state: GameState, savedDeck?: unknown): void {
+    this.gameState = state;
+    this.players = state.players;
+
+    if (savedDeck) {
+      const deckData = savedDeck as { cards: { suit: string; rank: string }[] };
+      this.deck = new Deck();
+      this.deck.restore(deckData.cards);
+    }
+
+    if (
+      this.gameType === 'blackjack' &&
+      this.gameState.phase !== 'waiting' &&
+      this.gameState.phase !== 'finished'
+    ) {
+      this.game = new BlackjackGame(this.players, this.deck, this.minBet);
+      this.game.restoreState(this.gameState);
+    }
+  }
+
   start(): GameState {
     if (this.gameType === 'blackjack') {
       this.game = new BlackjackGame(this.players, this.deck, this.minBet);

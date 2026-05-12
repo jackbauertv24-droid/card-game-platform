@@ -147,3 +147,113 @@ export function createTransaction(data: {
     'INSERT INTO transactions (id, user_id, amount, type, game_id, balance_after, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
   ).run(data.id, data.userId, data.amount, data.type, data.gameId, data.balanceAfter, now);
 }
+
+export function addRoomPlayer(roomId: string, userId: string, seatIndex: number) {
+  const now = new Date().toISOString();
+  db.prepare(
+    'INSERT INTO room_players (room_id, user_id, seat_index, is_ready, status, joined_at) VALUES (?, ?, ?, 0, "connected", ?)'
+  ).run(roomId, userId, seatIndex, now);
+}
+
+export function updateRoomPlayerStatus(roomId: string, userId: string, status: string) {
+  const disconnectedAt = status === 'disconnected' ? new Date().toISOString() : null;
+  db.prepare(
+    'UPDATE room_players SET status = ?, disconnected_at = ? WHERE room_id = ? AND user_id = ?'
+  ).run(status, disconnectedAt, roomId, userId);
+}
+
+export function getRoomPlayers(roomId: string) {
+  return db
+    .prepare('SELECT * FROM room_players WHERE room_id = ? ORDER BY seat_index')
+    .all(roomId) as {
+    room_id: string;
+    user_id: string;
+    seat_index: number;
+    is_ready: number;
+    status: string;
+    disconnected_at: string | null;
+    joined_at: string;
+  }[];
+}
+
+export function removeRoomPlayer(roomId: string, userId: string) {
+  db.prepare('DELETE FROM room_players WHERE room_id = ? AND user_id = ?').run(roomId, userId);
+}
+
+export function getActiveGameForRoom(roomId: string) {
+  return db
+    .prepare(
+      'SELECT * FROM games WHERE room_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1'
+    )
+    .get(roomId) as
+    | {
+        id: string;
+        room_id: string;
+        game_type: string;
+        state: string;
+        deck: string | null;
+        current_player_index: number;
+        turn_started_at: string | null;
+        winner_id: string | null;
+        pot: number | null;
+        started_at: string;
+        ended_at: string | null;
+      }
+    | undefined;
+}
+
+export function saveGameState(
+  gameId: string,
+  state: string,
+  deck: string,
+  currentPlayerIndex: number
+) {
+  const now = new Date().toISOString();
+  db.prepare(
+    'UPDATE games SET state = ?, deck = ?, current_player_index = ?, turn_started_at = ? WHERE id = ?'
+  ).run(state, deck, currentPlayerIndex, now, gameId);
+}
+
+export function updateGameTurnTimer(gameId: string) {
+  const now = new Date().toISOString();
+  db.prepare('UPDATE games SET turn_started_at = ? WHERE id = ?').run(now, gameId);
+}
+
+export function getUserActiveRoom(userId: string) {
+  const result = db
+    .prepare(
+      `
+    SELECT r.* FROM rooms r
+    JOIN room_players rp ON r.id = rp.room_id
+    WHERE rp.user_id = ? AND r.status IN ('waiting', 'playing')
+    ORDER BY rp.joined_at DESC
+    LIMIT 1
+  `
+    )
+    .get(userId) as import('shared').Room | undefined;
+  return result;
+}
+
+export function cleanDisconnectedPlayers(roomId: string, gracePeriodSeconds: number) {
+  const cutoff = new Date(Date.now() - gracePeriodSeconds * 1000).toISOString();
+  return db
+    .prepare(
+      `
+    DELETE FROM room_players 
+    WHERE room_id = ? AND status = 'disconnected' AND disconnected_at < ?
+  `
+    )
+    .run(roomId, cutoff);
+}
+
+export function getConnectedPlayerCount(roomId: string) {
+  const result = db
+    .prepare(
+      `
+    SELECT COUNT(*) as count FROM room_players 
+    WHERE room_id = ? AND status = 'connected'
+  `
+    )
+    .get(roomId) as { count: number };
+  return result.count;
+}

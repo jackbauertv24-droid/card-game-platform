@@ -1,12 +1,137 @@
 import type { GameSocketServer } from '../index';
 import type { Socket } from 'socket.io';
-import type { ClientToServerEvents, ServerToClientEvents } from 'shared';
+import type { ClientToServerEvents, ServerToClientEvents, GameState, GameActionType } from 'shared';
+import { TURN_TIMEOUT_SECONDS } from 'shared';
 import type { RoomManager } from '../../game/room/RoomManager';
 import { GameEngine } from '../../game/engine/GameEngine';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../../db';
 
 const activeGames: Map<string, GameEngine> = new Map();
+const turnTimers: Map<string, NodeJS.Timeout> = new Map();
+
+function saveGameState(gameId: string, roomId: string, gameState: GameState, deck?: unknown) {
+  const stateJson = JSON.stringify(gameState);
+  const deckJson = deck ? JSON.stringify(deck) : null;
+  const now = new Date().toISOString();
+
+  db.prepare(
+    `
+    INSERT OR REPLACE INTO games (id, room_id, game_type, state, deck, current_player_index, turn_started_at, started_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT started_at FROM games WHERE id = ?), ?))
+  `
+  ).run(
+    gameId,
+    roomId,
+    gameState.gameId || roomId,
+    stateJson,
+    deckJson,
+    gameState.currentPlayerIndex,
+    now,
+    gameId,
+    now
+  );
+}
+
+function loadGameState(
+  roomId: string
+): { gameId: string; state: GameState; deck?: unknown } | null {
+  const row = db
+    .prepare(
+      `
+    SELECT id, state, deck, current_player_index, turn_started_at 
+    FROM games WHERE room_id = ? AND ended_at IS NULL 
+    ORDER BY started_at DESC LIMIT 1
+  `
+    )
+    .get(roomId) as
+    | {
+        id: string;
+        state: string;
+        deck: string | null;
+        current_player_index: number;
+        turn_started_at: string | null;
+      }
+    | undefined;
+
+  if (!row) return null;
+
+  const state = JSON.parse(row.state) as GameState;
+  state.gameId = row.id;
+  const deck = row.deck ? JSON.parse(row.deck) : undefined;
+
+  return { gameId: row.id, state, deck };
+}
+
+function startTurnTimer(
+  io: GameSocketServer,
+  roomId: string,
+  gameId: string,
+  playerId: string,
+  game: GameEngine,
+  roomManager: RoomManager
+) {
+  clearTurnTimer(roomId);
+
+  const timer = setTimeout(() => {
+    console.log(`[game] Turn timeout for player ${playerId} in room ${roomId}`);
+
+    const room = roomManager.getRoom(roomId);
+    if (!room) return;
+
+    const currentPlayer = room.players.find((p) => p.id === playerId);
+    if (!currentPlayer) return;
+
+    if (currentPlayer.status === 'disconnected') {
+      const result = game.handleAction(playerId, { type: 'fold' });
+      if (result.success) {
+        const gameState = result.newState;
+        saveGameState(gameId, roomId, gameState);
+        io.to(roomId).emit('game:state', { gameState });
+
+        if (gameState.phase === 'betting' || gameState.phase === 'playing') {
+          const nextPlayer = room.players[gameState.currentPlayerIndex];
+          if (nextPlayer) {
+            io.to(roomId).emit('game:turn', {
+              playerId: nextPlayer.id,
+              validActions: gameState.phase === 'betting' ? ['bet'] : ['hit', 'stand'],
+            });
+            startTurnTimer(io, roomId, gameId, nextPlayer.id, game, roomManager);
+          }
+        }
+      }
+    } else {
+      const result = game.handleAction(playerId, { type: 'stand' });
+      if (result.success) {
+        const gameState = result.newState;
+        saveGameState(gameId, roomId, gameState);
+        io.to(roomId).emit('game:state', { gameState });
+        io.to(roomId).emit('game:timeout', { playerId, action: 'stand' });
+
+        if (gameState.phase === 'betting' || gameState.phase === 'playing') {
+          const nextPlayer = room.players[gameState.currentPlayerIndex];
+          if (nextPlayer) {
+            io.to(roomId).emit('game:turn', {
+              playerId: nextPlayer.id,
+              validActions: gameState.phase === 'betting' ? ['bet'] : ['hit', 'stand'],
+            });
+            startTurnTimer(io, roomId, gameId, nextPlayer.id, game, roomManager);
+          }
+        }
+      }
+    }
+  }, TURN_TIMEOUT_SECONDS * 1000);
+
+  turnTimers.set(roomId, timer);
+}
+
+function clearTurnTimer(roomId: string) {
+  const existing = turnTimers.get(roomId);
+  if (existing) {
+    clearTimeout(existing);
+    turnTimers.delete(roomId);
+  }
+}
 
 export function handleGameEvents(
   io: GameSocketServer,
@@ -21,36 +146,60 @@ export function handleGameEvents(
     try {
       const room = roomManager.getPlayersRoom(user.id);
       if (!room) {
-        console.log(`[game:start] User ${user.username} not in room`);
         callback({ success: false, message: 'You are not in a room' });
         return;
       }
 
       if (room.createdBy !== user.id) {
-        console.log(`[game:start] User ${user.username} not room owner`);
         callback({ success: false, message: 'Only the room owner can start the game' });
         return;
       }
 
-      console.log(`[game:start] Starting game for room ${room.id}`);
+      const existingGame = loadGameState(room.id);
+      if (existingGame) {
+        const game = new GameEngine(
+          existingGame.gameId,
+          room.id,
+          room.gameType,
+          room.minBet,
+          room.players
+        );
+        game.restoreState(existingGame.state, existingGame.deck);
+        activeGames.set(room.id, game);
+
+        io.to(room.id).emit('game:started', { gameState: existingGame.state });
+
+        const currentPlayer = room.players[existingGame.state.currentPlayerIndex];
+        if (currentPlayer && existingGame.state.phase !== 'finished') {
+          const validActions: GameActionType[] =
+            existingGame.state.phase === 'betting' ? ['bet'] : ['hit', 'stand', 'double'];
+          io.to(room.id).emit('game:turn', { playerId: currentPlayer.id, validActions });
+          startTurnTimer(io, room.id, existingGame.gameId, currentPlayer.id, game, roomManager);
+        }
+
+        callback({ success: true });
+        return;
+      }
+
+      console.log(`[game:start] Starting new game for room ${room.id}`);
       const gameId = uuidv4();
       const game = new GameEngine(gameId, room.id, room.gameType, room.minBet, room.players);
 
       activeGames.set(room.id, game);
       roomManager.updateRoomStatus(room.id, 'playing');
+      roomManager.setRoomGameId(room.id, gameId);
 
-      console.log(`[game:start] Game engine created, calling game.start()`);
       const initialState = game.start();
-      console.log(`[game:start] Initial state:`, JSON.stringify(initialState));
+      initialState.gameId = gameId;
+
+      saveGameState(gameId, room.id, initialState, game.getDeck());
 
       io.to(room.id).emit('game:started', { gameState: initialState });
-      console.log(`[game:start] Emitted game:started to room ${room.id}`);
 
-      // Emit turn event for first player in betting phase
-      const currentPlayerId = room.players[initialState.currentPlayerIndex]?.id;
-      if (currentPlayerId) {
-        console.log(`[game:start] First turn for player ${currentPlayerId}`);
-        io.to(room.id).emit('game:turn', { playerId: currentPlayerId, validActions: ['bet'] });
+      const currentPlayer = room.players[initialState.currentPlayerIndex];
+      if (currentPlayer) {
+        io.to(room.id).emit('game:turn', { playerId: currentPlayer.id, validActions: ['bet'] });
+        startTurnTimer(io, room.id, gameId, currentPlayer.id, game, roomManager);
       }
 
       callback({ success: true });
@@ -70,51 +219,56 @@ export function handleGameEvents(
       }
 
       const game = activeGames.get(room.id);
-      if (!game) {
-        callback({ success: false, message: 'No active game' });
+      let gameEngine: GameEngine | null = game || null;
+
+      if (!gameEngine) {
+        const loaded = loadGameState(room.id);
+        if (loaded) {
+          const restoredGame = new GameEngine(
+            loaded.gameId,
+            room.id,
+            room.gameType,
+            room.minBet,
+            room.players
+          );
+          restoredGame.restoreState(loaded.state, loaded.deck);
+          activeGames.set(room.id, restoredGame);
+          gameEngine = restoredGame;
+        } else {
+          callback({ success: false, message: 'No active game' });
+          return;
+        }
+      }
+
+      const currentPlayer = room.players[gameEngine.getState().currentPlayerIndex];
+      if (currentPlayer?.id !== user.id) {
+        callback({ success: false, message: 'Not your turn' });
         return;
       }
 
-      console.log(`[game:action] Processing action for game ${room.id}`);
-      const result = game.handleAction(user.id, data);
-      console.log(
-        `[game:action] Result:`,
-        JSON.stringify({ success: result.success, error: result.error })
-      );
+      const result = gameEngine.handleAction(user.id, data);
 
       if (!result.success) {
         callback({ success: false, message: result.error || 'Invalid action' });
         return;
       }
 
-      // Log the full state including player hands
-      console.log(`[game:action] New state phase: ${result.newState.phase}`);
-      console.log(
-        `[game:action] Player hands:`,
-        JSON.stringify(
-          result.newState.players.map((p) => ({ id: p.id, hand: p.hand, currentBet: p.currentBet }))
-        )
-      );
-      console.log(`[game:action] Dealer hand:`, JSON.stringify(result.newState.dealerHand));
-      console.log(`[game:action] Game ended:`, result.newState.phase === 'finished');
-      console.log(`[game:action] Events:`, result.events ? 'present' : 'none');
+      clearTurnTimer(room.id);
 
-      io.to(room.id).emit('game:state', { gameState: result.newState });
+      const newState = result.newState;
+      newState.gameId = gameEngine.gameId;
 
-      // Emit turn event for next player
-      const state = result.newState;
-      if (state.phase === 'betting' || state.phase === 'playing') {
-        const currentPlayerId = room.players[state.currentPlayerIndex]?.id;
-        if (currentPlayerId && !room.players[state.currentPlayerIndex]?.isFolded) {
-          const validActions =
-            state.phase === 'betting'
-              ? (['bet'] as import('shared').GameActionType[])
-              : (['hit', 'stand'] as import('shared').GameActionType[]);
-          console.log(
-            `[game:action] Next turn for player ${currentPlayerId}, actions:`,
-            validActions
-          );
-          io.to(room.id).emit('game:turn', { playerId: currentPlayerId, validActions });
+      saveGameState(gameEngine.gameId, room.id, newState, gameEngine.getDeck());
+
+      io.to(room.id).emit('game:state', { gameState: newState });
+
+      if (newState.phase === 'betting' || newState.phase === 'playing') {
+        const nextPlayer = room.players[newState.currentPlayerIndex];
+        if (nextPlayer && !nextPlayer.isFolded) {
+          const validActions: GameActionType[] =
+            newState.phase === 'betting' ? ['bet'] : ['hit', 'stand', 'double'];
+          io.to(room.id).emit('game:turn', { playerId: nextPlayer.id, validActions });
+          startTurnTimer(io, room.id, gameEngine.gameId, nextPlayer.id, gameEngine, roomManager);
         }
       }
 
@@ -141,17 +295,24 @@ export function handleGameEvents(
                   gr.playerId,
                   gr.amount,
                   gr.result,
-                  game.gameId,
+                  gameEngine.gameId,
                   newBalance,
                   new Date().toISOString()
                 );
               }
             }
 
+            db.prepare('UPDATE games SET ended_at = ? WHERE id = ?').run(
+              new Date().toISOString(),
+              gameEngine.gameId
+            );
+
             io.to(room.id).emit('game:ended', { results: gameResults });
 
             roomManager.updateRoomStatus(room.id, 'waiting');
+            roomManager.cleanDisconnectedPlayers(room.id);
             activeGames.delete(room.id);
+            clearTurnTimer(room.id);
           }
         }
       }

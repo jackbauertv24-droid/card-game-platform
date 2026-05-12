@@ -301,4 +301,19 @@ export class BlackjackGame {
 
     return [];
   }
+
+  restoreState(state: GameState): void {
+    this.players = state.players;
+    this.dealerHand = state.dealerHand;
+    this.minBet = state.minBet;
+    this.currentPlayerIndex = state.currentPlayerIndex;
+    this.phase = state.phase === 'waiting' ? 'betting' : state.phase;
+
+    this.bets.clear();
+    for (const player of this.players) {
+      if (player.currentBet > 0) {
+        this.bets.set(player.id, player.currentBet);
+      }
+    }
+  }
 }

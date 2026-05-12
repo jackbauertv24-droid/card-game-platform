@@ -17,6 +17,7 @@ export interface ServerToClientEvents {
     playerId: string;
     validActions: import('./game').GameActionType[];
   }) => void;
+  'game:timeout': (data: { playerId: string; action: string }) => void;
   'game:ended': (data: { results: GameResult[] }) => void;
   error: (data: { code: string; message: string }) => void;
 }

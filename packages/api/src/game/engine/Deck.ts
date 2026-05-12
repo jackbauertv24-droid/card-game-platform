@@ -46,4 +46,15 @@ export class Deck {
   remaining(): number {
     return this.cards.length;
   }
+
+  getCards(): Card[] {
+    return this.cards;
+  }
+
+  restore(cards: { suit: string; rank: string }[]): void {
+    this.cards = cards.map((c) => ({
+      suit: c.suit as Suit,
+      rank: c.rank as Rank,
+    }));
+  }
 }
