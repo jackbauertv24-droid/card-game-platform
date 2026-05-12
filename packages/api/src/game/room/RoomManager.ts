@@ -405,6 +405,20 @@ export class RoomManager {
       const playerIndex = room.players.findIndex((p) => p.id === userId);
       if (playerIndex !== -1) {
         if (room.status === 'playing') {
+          const connectedPlayers = room.players.filter((p) => p.status === 'connected');
+          if (connectedPlayers.length <= 1) {
+            db.prepare('DELETE FROM room_players WHERE room_id = ? AND user_id = ?').run(
+              room.id,
+              userId
+            );
+            db.prepare('DELETE FROM games WHERE room_id = ?').run(room.id);
+            db.prepare(
+              'DELETE FROM transactions WHERE game_id IN (SELECT id FROM games WHERE room_id = ?)'
+            ).run(room.id);
+            db.prepare('DELETE FROM rooms WHERE id = ?').run(room.id);
+            this.rooms.delete(room.id);
+            return { roomId: room.id, wasPlayer: true, wasOwner };
+          }
           this.setPlayerStatus(userId, 'disconnected');
           return { roomId: room.id, wasPlayer: true, wasOwner };
         }

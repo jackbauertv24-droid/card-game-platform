@@ -603,6 +603,27 @@ router.post('/:id/leave', authMiddleware, (req: Request, res: Response) => {
   }
 
   if (player && dbRoom.status === 'playing') {
+    const connectedPlayers = db
+      .prepare('SELECT COUNT(*) as count FROM room_players WHERE room_id = ? AND status = ?')
+      .get(dbRoom.id, 'connected') as { count: number };
+
+    if (connectedPlayers.count <= 1) {
+      db.prepare('DELETE FROM room_players WHERE room_id = ? AND user_id = ?').run(
+        dbRoom.id,
+        req.user!.id
+      );
+      const gameIds = db.prepare('SELECT id FROM games WHERE room_id = ?').all(dbRoom.id) as {
+        id: string;
+      }[];
+      for (const g of gameIds) {
+        db.prepare('DELETE FROM transactions WHERE game_id = ?').run(g.id);
+      }
+      db.prepare('DELETE FROM games WHERE room_id = ?').run(dbRoom.id);
+      db.prepare('DELETE FROM rooms WHERE id = ?').run(dbRoom.id);
+      roomManager.invalidateCache(dbRoom.id);
+      return res.json({ success: true, endedGame: true });
+    }
+
     db.prepare('UPDATE room_players SET status = ? WHERE room_id = ? AND user_id = ?').run(
       'disconnected',
       dbRoom.id,

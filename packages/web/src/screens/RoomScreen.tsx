@@ -27,12 +27,21 @@ export default function RoomScreen() {
       return;
     }
 
+    if (gameStore.currentRoom?.id === roomId && gameStore.gameState) {
+      setLoading(false);
+      return;
+    }
+
     if (!gameStore.currentRoom || gameStore.currentRoom.id !== roomId) {
       skt.emit('room:join', { roomId, asObserver: true }, (response) => {
         setLoading(false);
         if (response.success && response.room) {
           gameStore.setCurrentRoom(response.room);
-          gameStore.setIsObserver(true);
+          if (response.gameState) {
+            gameStore.setGameState(response.gameState);
+          }
+          const isPlayer = response.room.players.some((p) => p.id === user?.id);
+          gameStore.setIsObserver(!isPlayer);
         } else {
           setError(response.message || 'Failed to join room');
         }
@@ -54,6 +63,10 @@ export default function RoomScreen() {
       });
       const data = await res.json();
       if (data.success) {
+        const skt = socket.getSocket();
+        if (skt) {
+          skt.emit('room:leave', {}, () => {});
+        }
         gameStore.setCurrentRoom(null);
         gameStore.reset();
         navigate('/lobby');

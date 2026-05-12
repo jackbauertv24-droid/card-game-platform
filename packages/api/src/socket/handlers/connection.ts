@@ -28,18 +28,28 @@ export function handleConnection(
 
   const playerRoom = roomManager.getPlayersRoom(user.id);
   if (playerRoom) {
-    socket.join(playerRoom.id);
+    const existingPlayer = playerRoom.players.find((p) => p.id === user.id);
+    if (existingPlayer && existingPlayer.status === 'disconnected') {
+      socket.join(playerRoom.id);
 
-    const result = roomManager.setPlayerStatus(user.id, 'connected');
-    if (result) {
-      const gameState = loadGameState(playerRoom.id);
-      socket.emit('room:joined', { room: playerRoom, asObserver: false, gameState });
-      socket.to(playerRoom.id).emit('room:player_ready', {
-        playerId: user.id,
-        ready: playerRoom.players.find((p) => p.id === user.id)?.isReady ?? false,
-      });
+      const result = roomManager.setPlayerStatus(user.id, 'connected');
+      if (result) {
+        const gameState = loadGameState(playerRoom.id);
+        socket.emit('room:joined', { room: playerRoom, asObserver: false, gameState });
+        socket.to(playerRoom.id).emit('room:player_ready', {
+          playerId: user.id,
+          ready: playerRoom.players.find((p) => p.id === user.id)?.isReady ?? false,
+        });
 
-      console.log(`[socket] User ${user.username} reconnected to room ${playerRoom.id} as player`);
+        console.log(
+          `[socket] User ${user.username} reconnected to room ${playerRoom.id} as player`
+        );
+      }
+    } else if (existingPlayer) {
+      socket.join(playerRoom.id);
+      console.log(
+        `[socket] User ${user.username} already connected, joined room channel ${playerRoom.id}`
+      );
     }
   } else {
     const observerRoom = roomManager.getObserversRoom(user.id);
@@ -47,12 +57,7 @@ export function handleConnection(
       socket.join(observerRoom.id);
       const gameState = loadGameState(observerRoom.id);
       socket.emit('room:joined', { room: observerRoom, asObserver: true, gameState });
-      socket.to(observerRoom.id).emit('room:observer_joined', {
-        observer: observerRoom.observers.find((o) => o.id === user.id)!,
-      });
-      console.log(
-        `[socket] User ${user.username} reconnected to room ${observerRoom.id} as observer`
-      );
+      console.log(`[socket] User ${user.username} joined room ${observerRoom.id} as observer`);
     }
   }
 
