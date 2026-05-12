@@ -82,43 +82,76 @@ function startTurnTimer(
     const currentPlayer = room.players.find((p) => p.id === playerId);
     if (!currentPlayer) return;
 
-    if (currentPlayer.status === 'disconnected') {
-      const result = game.handleAction(playerId, { type: 'fold' });
-      if (result.success) {
-        const gameState = result.newState;
-        saveGameState(gameId, roomId, gameState);
-        io.to(roomId).emit('game:state', { gameState });
+    const actionType = currentPlayer.status === 'disconnected' ? 'fold' : 'stand';
+    console.log(`[game] Turn timeout action: ${actionType} for player ${playerId}`);
 
-        if (gameState.phase === 'betting' || gameState.phase === 'playing') {
-          const nextPlayer = room.players[gameState.currentPlayerIndex];
-          if (nextPlayer) {
-            io.to(roomId).emit('game:turn', {
-              playerId: nextPlayer.id,
-              validActions: gameState.phase === 'betting' ? ['bet'] : ['hit', 'stand'],
-            });
-            startTurnTimer(io, roomId, gameId, nextPlayer.id, game, roomManager);
+    const result = game.handleAction(playerId, { type: actionType });
+    if (result.success) {
+      const gameState = result.newState;
+      gameState.gameId = gameId;
+      saveGameState(gameId, roomId, gameState, game.getDeck());
+      io.to(roomId).emit('game:state', { gameState });
+
+      if (actionType === 'stand') {
+        io.to(roomId).emit('game:timeout', { playerId, action: 'stand' });
+      }
+
+      if (gameState.phase === 'finished') {
+        console.log(`[game] Game ended due to turn timeout in room ${roomId}`);
+
+        if (result.events) {
+          for (const event of result.events) {
+            if (event.type === 'game:end') {
+              const gameResults = event.data as import('shared').GameResult[];
+              io.to(roomId).emit('game:ended', { results: gameResults });
+
+              for (const gr of gameResults) {
+                const player = room.players.find((p) => p.id === gr.playerId);
+                if (player) {
+                  const newBalance = player.balance + gr.amount;
+                  player.balance = newBalance;
+                  db.prepare('UPDATE users SET balance = ? WHERE id = ?').run(
+                    newBalance,
+                    gr.playerId
+                  );
+
+                  db.prepare(
+                    'INSERT INTO transactions (id, user_id, amount, type, game_id, balance_after, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+                  ).run(
+                    uuidv4(),
+                    gr.playerId,
+                    gr.amount,
+                    gr.result,
+                    gameId,
+                    newBalance,
+                    new Date().toISOString()
+                  );
+                }
+              }
+            }
           }
+        }
+
+        db.prepare('UPDATE games SET ended_at = ? WHERE id = ?').run(
+          new Date().toISOString(),
+          gameId
+        );
+        roomManager.updateRoomStatus(roomId, 'waiting');
+        roomManager.cleanDisconnectedPlayers(roomId);
+        activeGames.delete(roomId);
+        clearTurnTimer(roomId);
+      } else if (gameState.phase === 'betting' || gameState.phase === 'playing') {
+        const nextPlayer = room.players[gameState.currentPlayerIndex];
+        if (nextPlayer && !nextPlayer.isFolded) {
+          io.to(roomId).emit('game:turn', {
+            playerId: nextPlayer.id,
+            validActions: gameState.phase === 'betting' ? ['bet'] : ['hit', 'stand'],
+          });
+          startTurnTimer(io, roomId, gameId, nextPlayer.id, game, roomManager);
         }
       }
     } else {
-      const result = game.handleAction(playerId, { type: 'stand' });
-      if (result.success) {
-        const gameState = result.newState;
-        saveGameState(gameId, roomId, gameState);
-        io.to(roomId).emit('game:state', { gameState });
-        io.to(roomId).emit('game:timeout', { playerId, action: 'stand' });
-
-        if (gameState.phase === 'betting' || gameState.phase === 'playing') {
-          const nextPlayer = room.players[gameState.currentPlayerIndex];
-          if (nextPlayer) {
-            io.to(roomId).emit('game:turn', {
-              playerId: nextPlayer.id,
-              validActions: gameState.phase === 'betting' ? ['bet'] : ['hit', 'stand'],
-            });
-            startTurnTimer(io, roomId, gameId, nextPlayer.id, game, roomManager);
-          }
-        }
-      }
+      console.log(`[game] Turn timeout action failed: ${result.error}`);
     }
   }, TURN_TIMEOUT_SECONDS * 1000);
 

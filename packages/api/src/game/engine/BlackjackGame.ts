@@ -91,9 +91,43 @@ export class BlackjackGame {
         return { success: true, newState: this.getState(), gameEnded: this.checkGameEnded() };
       }
 
+      if (action.type === 'fold') {
+        const player = this.players[playerIndex];
+        player.isFolded = true;
+        this.results.set(playerId, { result: 'lose', amount: 0 });
+
+        const allPlayersDone = this.players.every((p) => p.isFolded || p.currentBet > 0);
+        if (allPlayersDone) {
+          const activePlayers = this.players.filter((p) => !p.isFolded);
+          if (activePlayers.length === 0) {
+            this.phase = 'finished';
+          } else {
+            this.phase = 'playing';
+            this.dealInitialCards();
+            this.currentPlayerIndex = 0;
+            while (
+              this.currentPlayerIndex < this.players.length &&
+              this.players[this.currentPlayerIndex].isFolded
+            ) {
+              this.currentPlayerIndex++;
+            }
+          }
+        } else {
+          this.currentPlayerIndex++;
+          while (
+            this.currentPlayerIndex < this.players.length &&
+            this.players[this.currentPlayerIndex].isFolded
+          ) {
+            this.currentPlayerIndex++;
+          }
+        }
+
+        return { success: true, newState: this.getState(), gameEnded: this.checkGameEnded() };
+      }
+
       return {
         success: false,
-        error: 'Only betting is allowed in betting phase',
+        error: 'Only betting or fold is allowed in betting phase',
         newState: this.getState(),
       };
     }
@@ -125,6 +159,14 @@ export class BlackjackGame {
       }
 
       if (action.type === 'stand') {
+        this.nextPlayer();
+        return { success: true, newState: this.getState(), gameEnded: this.checkGameEnded() };
+      }
+
+      if (action.type === 'fold') {
+        player.isFolded = true;
+        const bet = this.bets.get(playerId) || 0;
+        this.results.set(playerId, { result: 'lose', amount: -bet });
         this.nextPlayer();
         return { success: true, newState: this.getState(), gameEnded: this.checkGameEnded() };
       }
