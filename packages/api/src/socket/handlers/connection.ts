@@ -14,25 +14,31 @@ export function handleConnection(
   socket.emit('auth:success', { user, token: socket.handshake.auth.token });
   console.log(`[socket] Sent auth:success to ${user.username}`);
 
-  const existingRoom = roomManager.getPlayersRoom(user.id);
-  if (existingRoom) {
-    socket.join(existingRoom.id);
+  const playerRoom = roomManager.getPlayersRoom(user.id);
+  if (playerRoom) {
+    socket.join(playerRoom.id);
 
     const result = roomManager.setPlayerStatus(user.id, 'connected');
     if (result) {
-      socket.emit('room:joined', { room: existingRoom });
-      socket
-        .to(existingRoom.id)
-        .emit('room:player_ready', {
-          playerId: user.id,
-          ready: existingRoom.players.find((p) => p.id === user.id)?.isReady ?? false,
-        });
-
-      io.to(existingRoom.id).emit('room:player_joined', {
-        player: existingRoom.players.find((p) => p.id === user.id)!,
+      socket.emit('room:joined', { room: playerRoom, asObserver: false });
+      socket.to(playerRoom.id).emit('room:player_ready', {
+        playerId: user.id,
+        ready: playerRoom.players.find((p) => p.id === user.id)?.isReady ?? false,
       });
 
-      console.log(`[socket] User ${user.username} reconnected to room ${existingRoom.id}`);
+      console.log(`[socket] User ${user.username} reconnected to room ${playerRoom.id} as player`);
+    }
+  } else {
+    const observerRoom = roomManager.getObserversRoom(user.id);
+    if (observerRoom) {
+      socket.join(observerRoom.id);
+      socket.emit('room:joined', { room: observerRoom, asObserver: true });
+      socket.to(observerRoom.id).emit('room:observer_joined', {
+        observer: observerRoom.observers.find((o) => o.id === user.id)!,
+      });
+      console.log(
+        `[socket] User ${user.username} reconnected to room ${observerRoom.id} as observer`
+      );
     }
   }
 
