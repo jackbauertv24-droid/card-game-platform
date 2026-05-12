@@ -14,26 +14,20 @@ BACKEND_PID_FILE="/tmp/cardgame-backend.pid"
 FRONTEND_PID_FILE="/tmp/cardgame-web.pid"
 LOCK_FILE="/tmp/cardgame-stop.lock"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
-log_success() {
-    echo "${GREEN}[OK]${NC} $1"
+log_ok() {
+    echo "[OK] $1"
 }
 
 log_error() {
-    echo "${RED}[ERROR]${NC} $1"
+    echo "[ERROR] $1"
 }
 
 log_warn() {
-    echo "${YELLOW}[WARN]${NC} $1"
+    echo "[WARN] $1"
 }
 
 # Stop a service by PID file
@@ -71,7 +65,7 @@ stop_service() {
     local waited=0
     while [ $waited -lt $graceful_timeout ]; do
         if ! kill -0 "$pid" 2>/dev/null; then
-            log_success "$service_name stopped gracefully (PID $pid)"
+            log_ok "$service_name stopped gracefully (PID $pid)"
             rm -f "$pid_file"
             return 0
         fi
@@ -87,7 +81,7 @@ stop_service() {
     waited=0
     while [ $waited -lt $force_timeout ]; do
         if ! kill -0 "$pid" 2>/dev/null; then
-            log_success "$service_name stopped forcefully (PID $pid)"
+            log_ok "$service_name stopped forcefully (PID $pid)"
             rm -f "$pid_file"
             return 0
         fi
@@ -134,7 +128,7 @@ main() {
     
     log ""
     log "============================================"
-    log_success "All services stopped"
+    log_ok "All services stopped"
     log "============================================"
     log ""
     log "To restart: $SCRIPT_DIR/start.sh"

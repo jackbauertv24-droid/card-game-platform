@@ -13,13 +13,6 @@ FRONTEND_PID_FILE="/tmp/cardgame-web.pid"
 BACKEND_LOG="/tmp/cardgame-backend.log"
 FRONTEND_LOG="/tmp/cardgame-web.log"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
 # Check service status
 check_service() {
     local pid_file="$1"
@@ -27,10 +20,10 @@ check_service() {
     local port="$3"
     local log_file="$4"
     
-    echo "${BLUE}$service_name:${NC}"
+    echo "$service_name:"
     
     if [ ! -f "$pid_file" ]; then
-        echo "  Status: ${RED}STOPPED${NC} (no PID file)"
+        echo "  Status: STOPPED (no PID file)"
         echo "  PID:    N/A"
         return 1
     fi
@@ -38,13 +31,13 @@ check_service() {
     local pid=$(cat "$pid_file")
     
     if [ -z "$pid" ]; then
-        echo "  Status: ${RED}STOPPED${NC} (empty PID file)"
+        echo "  Status: STOPPED (empty PID file)"
         echo "  PID:    N/A"
         return 1
     fi
     
     if ! kill -0 "$pid" 2>/dev/null; then
-        echo "  Status: ${RED}STOPPED${NC} (process died)"
+        echo "  Status: STOPPED (process died)"
         echo "  PID:    $pid (stale)"
         return 1
     fi
@@ -56,13 +49,13 @@ check_service() {
     fi
     
     if curl -s --connect-timeout 2 "$health_url" > /dev/null 2>&1; then
-        echo "  Status: ${GREEN}RUNNING${NC} (healthy)"
-        echo "  PID:    ${GREEN}$pid${NC}"
+        echo "  Status: RUNNING (healthy)"
+        echo "  PID:    $pid"
         echo "  URL:    http://localhost:$port"
         echo "  Net:    http://10.4.0.9:$port"
         echo "  Log:    $log_file"
         
-        # Show last few log lines
+        # Show last log line
         if [ -f "$log_file" ]; then
             local last_line=$(tail -1 "$log_file" 2>/dev/null)
             if [ -n "$last_line" ]; then
@@ -71,8 +64,8 @@ check_service() {
         fi
         return 0
     else
-        echo "  Status: ${YELLOW}RUNNING${NC} (unhealthy/not responding)"
-        echo "  PID:    ${YELLOW}$pid${NC}"
+        echo "  Status: RUNNING (unhealthy/not responding)"
+        echo "  PID:    $pid"
         echo "  URL:    http://localhost:$port (not responding)"
         echo "  Log:    $log_file"
         return 2
@@ -107,14 +100,14 @@ echo ""
 echo "============================================"
 
 if [ $backend_status -eq 0 ] && [ $frontend_status -eq 0 ]; then
-    echo "${GREEN}All services healthy${NC}"
+    echo "All services healthy"
     exit 0
 elif [ $backend_status -eq 1 ] && [ $frontend_status -eq 1 ]; then
-    echo "${RED}All services stopped${NC}"
+    echo "All services stopped"
     echo "Start with: $SCRIPT_DIR/start.sh"
     exit 1
 else
-    echo "${YELLOW}Some services unhealthy${NC}"
+    echo "Some services unhealthy"
     echo "Restart with: $SCRIPT_DIR/restart.sh"
     exit 2
 fi

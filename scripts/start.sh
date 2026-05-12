@@ -20,26 +20,20 @@ FRONTEND_LOG="/tmp/cardgame-web.log"
 # Lock file to prevent multiple starts
 LOCK_FILE="/tmp/cardgame-start.lock"
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
-log_success() {
-    echo "${GREEN}[OK]${NC} $1"
+log_ok() {
+    echo "[OK] $1"
 }
 
 log_error() {
-    echo "${RED}[ERROR]${NC} $1"
+    echo "[ERROR] $1"
 }
 
 log_warn() {
-    echo "${YELLOW}[WARN]${NC} $1"
+    echo "[WARN] $1"
 }
 
 # Check if a process is running by PID file
@@ -99,9 +93,9 @@ start_backend() {
     local waited=0
     while [ $waited -lt $max_wait ]; do
         if curl -s --connect-timeout 1 http://localhost:4000/health > /dev/null 2>&1; then
-            log_success "Backend started (PID $pid)"
-            log_success "Backend health check passed"
-            log_success "Backend log: $BACKEND_LOG"
+            log_ok "Backend started (PID $pid)"
+            log_ok "Backend health check passed"
+            log_ok "Backend log: $BACKEND_LOG"
             return 0
         fi
         sleep 1
@@ -154,8 +148,8 @@ start_frontend() {
     local waited=0
     while [ $waited -lt $max_wait ]; do
         if curl -s --connect-timeout 1 http://localhost:5173 > /dev/null 2>&1; then
-            log_success "Frontend started (PID $pid)"
-            log_success "Frontend log: $FRONTEND_LOG"
+            log_ok "Frontend started (PID $pid)"
+            log_ok "Frontend log: $FRONTEND_LOG"
             return 0
         fi
         sleep 1
@@ -215,7 +209,7 @@ main() {
     
     log ""
     log "============================================"
-    log_success "All services started successfully!"
+    log_ok "All services started successfully!"
     log "============================================"
     log ""
     log "Backend:  http://localhost:4000 (Network: http://10.4.0.9:4000)"
