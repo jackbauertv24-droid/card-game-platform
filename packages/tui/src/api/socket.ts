@@ -170,8 +170,9 @@ class SocketClient {
   createRoom(name: string, gameType: GameType, maxPlayers: number, minBet: number) {
     if (this.socket) {
       this.socket.emit('room:create', { name, gameType, maxPlayers, minBet }, (res) => {
-        if (res.success && res.room && this.onRoomJoined) {
-          this.onRoomJoined(res.room, false);
+        if (res.success && res.room) {
+          if (this.onRoomJoined) this.onRoomJoined(res.room, false);
+          if (res.gameState && this.onGameState) this.onGameState(res.gameState);
         } else if (this.onError) {
           this.onError(res.message || 'Failed to create room');
         }

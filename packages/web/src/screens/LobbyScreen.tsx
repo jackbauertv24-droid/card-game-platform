@@ -57,27 +57,29 @@ export default function LobbyScreen() {
       skt.emit('room:leave', {}, () => {
         gameStore.setCurrentRoom(null);
         gameStore.reset();
-        skt.emit('room:join', { roomId, asObserver: true }, (response) => {
-          if (response.success && response.room) {
-            gameStore.setCurrentRoom(response.room);
-            gameStore.setIsObserver(true);
-            navigate(`/room/${roomId}`);
-          } else {
-            alert(response.message || 'Failed to join room');
-          }
-        });
+        doJoinRoom(roomId);
       });
     } else {
-      skt.emit('room:join', { roomId, asObserver: true }, (response) => {
-        if (response.success && response.room) {
-          gameStore.setCurrentRoom(response.room);
-          gameStore.setIsObserver(true);
-          navigate(`/room/${roomId}`);
-        } else {
-          alert(response.message || 'Failed to join room');
-        }
-      });
+      doJoinRoom(roomId);
     }
+  };
+
+  const doJoinRoom = (roomId: string) => {
+    const skt = socket.getSocket();
+    if (!skt) return;
+
+    skt.emit('room:join', { roomId, asObserver: true }, (response) => {
+      if (response.success && response.room) {
+        gameStore.setCurrentRoom(response.room);
+        gameStore.setIsObserver(true);
+        if (response.gameState) {
+          gameStore.setGameState(response.gameState);
+        }
+        navigate(`/room/${roomId}`);
+      } else {
+        alert(response.message || 'Failed to join room');
+      }
+    });
   };
 
   const handleRejoinRoom = () => {

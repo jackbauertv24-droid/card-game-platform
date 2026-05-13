@@ -27,28 +27,24 @@ export default function RoomScreen() {
       return;
     }
 
-    if (gameStore.currentRoom?.id === roomId && gameStore.gameState) {
+    if (gameStore.currentRoom?.id === roomId) {
       setLoading(false);
       return;
     }
 
-    if (!gameStore.currentRoom || gameStore.currentRoom.id !== roomId) {
-      skt.emit('room:join', { roomId, asObserver: true }, (response) => {
-        setLoading(false);
-        if (response.success && response.room) {
-          gameStore.setCurrentRoom(response.room);
-          if (response.gameState) {
-            gameStore.setGameState(response.gameState);
-          }
-          const isPlayer = response.room.players.some((p) => p.id === user?.id);
-          gameStore.setIsObserver(!isPlayer);
-        } else {
-          setError(response.message || 'Failed to join room');
-        }
-      });
-    } else {
+    skt.emit('room:join', { roomId, asObserver: true }, (response) => {
       setLoading(false);
-    }
+      if (response.success && response.room) {
+        gameStore.setCurrentRoom(response.room);
+        if (response.gameState) {
+          gameStore.setGameState(response.gameState);
+        }
+        const isPlayer = response.room.players.some((p) => p.id === user?.id);
+        gameStore.setIsObserver(!isPlayer);
+      } else {
+        setError(response.message || 'Failed to join room');
+      }
+    });
   }, [roomId, user, socket]);
 
   const handleLeave = async () => {

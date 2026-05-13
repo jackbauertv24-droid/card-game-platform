@@ -31,9 +31,6 @@ export function useSocket() {
     socket.on(
       'room:joined',
       (data: { room: RoomDetail; asObserver: boolean; gameState?: GameState }) => {
-        if (gameStore.currentRoom?.id === data.room.id && gameStore.gameState) {
-          return;
-        }
         gameStore.setCurrentRoom(data.room);
         gameStore.setIsObserver(data.asObserver);
         if (data.gameState) {

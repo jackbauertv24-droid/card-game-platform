@@ -244,42 +244,13 @@ const commands: Record<string, (args: string[]) => Promise<void> | void> = {
     }
     await connectSocket();
 
-    try {
-      const res = await fetch(`${API_URL}/rooms`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${state.token}`,
-        },
-        body: JSON.stringify({
-          name: args[0],
-          gameType: args[1],
-          maxPlayers: parseInt(args[2]) || 5,
-          minBet: parseInt(args[3]) || 100,
-        }),
-      });
-      const data = (await res.json()) as {
-        room: RoomDetail;
-        gameState?: GameState;
-        error?: string;
-      };
-      if (data.error) {
-        console.error(data.error);
-        return;
-      }
-      state.room = data.room;
-      state.gameState = data.gameState || null;
-      const isPlayer = data.room.players.some((p) => p.id === state.user?.id);
-      state.isObserver = !isPlayer;
-      saveState();
-      console.log(`Created room: ${data.room.name} (${data.room.id})`);
-      printRoom();
-      if (data.gameState) {
-        printGameState();
-      }
-    } catch (err) {
-      console.error((err as Error).message);
-    }
+    const name = args[0];
+    const gameType = args[1] as import('shared').GameType;
+    const maxPlayers = parseInt(args[2]) || 5;
+    const minBet = parseInt(args[3]) || 100;
+
+    socketClient.createRoom(name, gameType, maxPlayers, minBet);
+    console.log('Creating room via socket...');
   },
 
   async join(args) {
